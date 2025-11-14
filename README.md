@@ -1,5 +1,4 @@
-# VE7CCUserApp.WinForms.Full v2
-
+# ZV Cluster Monitor App
 This single-project WinForms app includes:
 - DX cluster telnet client (basic IAC handling)
 - Multi-cluster management, primary auto-connect
@@ -10,13 +9,9 @@ This single-project WinForms app includes:
 - Settings UI and cluster editor
 
 Build:
-Requires .NET 7 and Windows.
-
-    dotnet build
-
-Open the produced EXE in bin\Debug\net7.0-windows and run.
+Requires .NET 9.0 SDK or later.
 
 Notes:
-- Settings are saved to `ve7cc_winforms_full_settings.json`.
+- Settings are saved to `ZVClusterApp.settings.json`.
 - CAT commands and exact CI-V sequences are basic and may need tuning per radio model.
-- If you want DPAPI-encrypted credentials or richer telnet option negotiation I can add that.
+
