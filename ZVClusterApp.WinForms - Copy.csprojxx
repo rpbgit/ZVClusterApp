@@ -20,11 +20,6 @@
     <InformationalVersion>1.1.$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd_HH:mm'))</InformationalVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="ZVClusterApp.WinForms\**" />
-    <EmbeddedResource Remove="ZVClusterApp.WinForms\**" />
-    <None Remove="ZVClusterApp.WinForms\**" />
-  </ItemGroup>
-  <ItemGroup>
     <Compile Remove="SettingsForm.Designer.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -36,5 +31,8 @@
     <Content Include="cty.dat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="ZVClusterApp.WinForms\" />
   </ItemGroup>
 </Project>
