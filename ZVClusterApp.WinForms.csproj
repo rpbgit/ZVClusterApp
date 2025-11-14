@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ZVClusterApp</AssemblyName>
+    <RootNamespace>ZVClusterApp.WinForms</RootNamespace>
+    <ApplicationIcon>alfred-e-newman-how-to-solder.ico</ApplicationIcon>
+
+    <!-- Option A: time-based auto-stamping -->
+    <!-- Keep AssemblyVersion stable for binding -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <!-- Numeric FileVersion with safe ranges per segment: Major.Minor.yyddd.HHmm -->
+    <!-- yyddd (year and day-of-year) max 99366 < 65535? No; ensure 2-digit year + 3-digit day -> up to 99366 which is <= 99999; but still string, Windows enforces <= 65535.
+         We'll format as 2-digit year concatenated with 3-digit day, which yields max 99366 (within 65535). -->
+    <FileVersion>1.1.$([System.String]::Format('{0}{1:000}',$([System.DateTime]::UtcNow.ToString('yy')),$([System.DateTime]::UtcNow.DayOfYear))).$([System.DateTime]::UtcNow.ToString('HHmm'))</FileVersion>
+    <!-- Human-friendly informational version used by About dialog (your code trims metadata) -->
+    <InformationalVersion>1.1.$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd_HH:mm'))</InformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="SettingsForm.Designer.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="alfred-e-newman-how-to-solder.ico" />
+    <PackageReference Include="System.Text.Json" Version="9.0.10" />
+    <PackageReference Include="System.IO.Ports" Version="9.0.10" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="cty.dat">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="ZVClusterApp.WinForms\" />
+  </ItemGroup>
+</Project>

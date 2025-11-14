@@ -1,0 +1,80 @@
+
+
+
+> sh/filter
+[AI9T] DX Spot Orig Cty Filter/All set to Pass: K,VE
+[AI9T] DX Spot Orig State Filter/All set OFF
+[AI9T] DX CTY Filter/All set to Reject: K,VE
+[AI9T] DX State Filter/All set OFF
+[AI9T] Announce Cty Filter set OFF
+[AI9T] Announcement Spot Orig State Filter set OFF
+[AI9T] WX Cty Filter set OFF
+[AI9T] WX Orig State Filter set OFF
+[AI9T] BandMode Filter set to 1006827524/15370
+[AI9T] DX BandMode Filter set to Reject: 2-CW,1-CW,70-CW,2-SSB,1-FM,70-FM,60-SSB,2-FM,1-SSB,70-SSB,MW-MW
+[AI9T] BandTime Filter set OFF
+[AI9T] Keyword Filter set OFF
+[AI9T] N0CLU de AI9T 07-Nov-2025 0042Z   CCC >
+
+
+Dx spotter orig country
+SET/FILTER DOC/OFF 
+SET/FILTER DOS/Off
+   
+SET/FILTER DOC/PASS K,VE  <- pass only spots originating in K,VE
+SET/FILTER DOS/Off 
+   
+Dx country OFF/show only K/VE
+
+SET/FILTER DXCTY/OFF 
+SET/FILTER DXCTY/REJECT K,VE  <- ignore K,VE spots, all else ok
+
+SET/FILTER DOC/PASS K,VE\t#only pass spots that originate from U.S. and Canada 
+SET/FILTER DOC/PASS ALL\tpass spots that originate anywhere
+
+   <- SET/FILTER DOC/OFF 
+   <- SET/FILTER DOS/Off
+   
+   SET/FILTER DOC/PASS K,VE
+   
+   diff between SET/FILTER DOC/PASS K,VE and SET/FILTER DXCTY/REJECT K,VE
+   
+   
+   
+   -----------------------------------------------------------
+   CC-CLUSTER FILTER COMMAND RECIPES
+
+1.  Pass ONLY North American spot originators SET/FILTER DOC/PASS K,VE
+    SET/FILTER DOC/REJECT ALL
+
+2.  Pass ONLY DX spots (reject US/Canada DX stations) SET/FILTER
+    DXCTY/REJECT K,VE SET/FILTER DXCTY/PASS ALL
+
+3.  Show ONLY US/Canada DX stations SET/FILTER DXCTY/PASS K,VE
+    SET/FILTER DXCTY/REJECT ALL
+
+4.  Pass ONLY EU spot originators SET/FILTER DOC/PASS
+    DL,PA,ON,F,I,EA,G,GM,GW,OE,OK SET/FILTER DOC/REJECT ALL
+
+5.  Pass ONLY EU DX stations SET/FILTER DXCTY/PASS
+    DL,PA,ON,F,I,EA,G,OE,OK,SP,HA SET/FILTER DXCTY/REJECT ALL
+
+6.  Hide ALL FT8 spots SET/FILTER MODE/REJECT FT8
+
+7.  Pass ONLY CW spots SET/FILTER MODE/PASS CW SET/FILTER MODE/REJECT
+    ALL
+
+8.  Show ONLY HF bands SET/FILTER BAND/PASS 160,80,40,30,20,17,15,12,10
+    SET/FILTER BAND/REJECT ALL
+
+9.  Pass ONLY rare DXCC entities SET/FILTER DX/PASS FT,3Y0,VP6,ZD9,HK0M*
+    SET/FILTER DX/REJECT ALL
+
+10. Pass ONLY spots where a K/VE station hears a non-K/VE DX SET/FILTER
+    DOC/PASS K,VE SET/FILTER DXCTY/REJECT K,VE
+
+11. Pass ONLY spots where EU hears rare DX SET/FILTER DOC/PASS
+    DL,ON,PA,F,I,EA,G,OE SET/FILTER DX/PASS FT,3Y0,VP6,ZD9,HK0M*
+    SET/FILTER DOC/REJECT ALL SET/FILTER DX/REJECT ALL
+
+12. Pass EVERYTHING — reset all filters SET/FILTER RESET  << THIS DOES NOT WORK
