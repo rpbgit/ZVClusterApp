@@ -1525,7 +1525,8 @@ namespace ZVClusterApp.WinForms
                 if (!string.IsNullOrWhiteSpace(name))
                     existing = _settings.Clusters.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 
-                using var editor = new ClusterEditorForm(existing);
+                // Pass a copy into the editor to avoid mutating the live instance during Cancel
+                using var editor = new ClusterEditorForm(existing != null ? existing with { } : null);
                 if (editor.ShowDialog(this) == DialogResult.OK)
                 {
                     var updated = editor.Def;

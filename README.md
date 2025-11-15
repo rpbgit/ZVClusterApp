@@ -1,5 +1,5 @@
 # ZV Cluster Monitor App
-This single-project WinForms app includes:
+This single-project self contained app includes:
 - DX cluster telnet client (basic IAC handling)
 - Multi-cluster management, primary auto-connect
 - Per-cluster login and default commands

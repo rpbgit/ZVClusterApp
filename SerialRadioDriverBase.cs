@@ -9,9 +9,48 @@ namespace ZVClusterApp.WinForms
     {
         protected SerialPort? _serial;
 
-        public bool Enabled { get; set; }
-        public string Port { get; set; } = "COM1";
-        public int Baud { get; set; } = 19200;
+        // Backing fields with sensible defaults
+        private bool _enabled;
+        private string _port = "COM1";
+        private int _baud = 19200;
+
+        public bool Enabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                // Any toggle of Enabled forces a disconnect; we keep lazy connect semantics.
+                Disconnect();
+            }
+        }
+
+        public string Port
+        {
+            get => _port;
+            set
+            {
+                var newPort = string.IsNullOrWhiteSpace(value) ? "COM1" : value.Trim();
+                if (string.Equals(_port, newPort, StringComparison.OrdinalIgnoreCase)) return;
+                _port = newPort;
+                // Changing port while open requires a reconnect with new settings.
+                Disconnect();
+            }
+        }
+
+        public int Baud
+        {
+            get => _baud;
+            set
+            {
+                var newBaud = value <= 0 ? 19200 : value;
+                if (_baud == newBaud) return;
+                _baud = newBaud;
+                // Changing baud while open requires a reconnect with new settings.
+                Disconnect();
+            }
+        }
 
         public virtual bool Connect()
         {
@@ -45,7 +84,7 @@ namespace ZVClusterApp.WinForms
             {
                 if (_serial != null)
                 {
-                    Debug.WriteLine($"[CAT] Disconnect: Port={_serial.PortName}, IsOpen={_serial.IsOpen}");
+                    Debug.WriteLine($"[CAT] Disconnect: Port={_serial.PortName}, IsOpen={_serial.IsOpen}, Baud={Baud}");
                     try { _serial.Close(); } catch (Exception ex) { Debug.WriteLine($"[CAT] Close error: {ex.Message}"); }
                 }
             }

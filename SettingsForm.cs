@@ -9,6 +9,8 @@ namespace ZVClusterApp.WinForms {
     [DesignerCategory("Form")]
     public partial class SettingsForm : Form {
         private readonly AppSettings _settings;
+        // Work on a deep copy and only apply changes back on OK
+        private AppSettings _working = null!;
 
         // Expose a colors object for designer/property binding if needed
         [Browsable(false)]
@@ -80,6 +82,8 @@ namespace ZVClusterApp.WinForms {
 
         public SettingsForm(AppSettings settings) {
             _settings = settings; Text = "Settings";
+            // Create a deep working copy of provided settings
+            _working = CloneSettings(_settings);
             StartPosition = FormStartPosition.CenterParent;
             AutoScaleMode = AutoScaleMode.Dpi; // scale control sizes/positions for high DPI
             AutoScroll = true; // allow scrolling if content exceeds client area
@@ -133,13 +137,14 @@ namespace ZVClusterApp.WinForms {
             base.OnFormClosing(e);
             try
             {
-                // Persist window location if normal state
+                // Persist window location to in-memory settings if normal state (disk save is only on OK)
                 if (WindowState == FormWindowState.Normal)
                 {
                     // Save absolute position only
                     _settings.SettingsLeft = Left;
                     _settings.SettingsTop = Top;
-                    AppSettings.Save(_settings);
+                    // Do NOT persist to disk here; only the OK path should save.
+                    // Previously: AppSettings.Save(_settings);
                 }
             }
             catch { }
@@ -328,7 +333,7 @@ namespace ZVClusterApp.WinForms {
         }
 
         private void BindSettingsToUi() {
-            // Ensure there is at least one cluster and one primary marked
+            // Ensure there is at least one cluster and one primary marked on working copy
             try { EnsureDefaultClusterAndPrimary(); } catch { }
 
             // Ensure list views have columns (designer file doesn't define them)
@@ -345,22 +350,22 @@ namespace ZVClusterApp.WinForms {
             // Populate clusters list
             RefreshClustersList();
 
-            // Apply settings to spot group
-            try { _numServerPort.Value = Math.Max(_numServerPort.Minimum, Math.Min(_numServerPort.Maximum, _settings.LocalServerPort)); } catch { }
-            _chkServerEnabled.Checked = _settings.LocalServerEnabled;
-            _chkDebugLog.Checked = _settings.DebugLogEnabled; // initial debug logging state (default false if unset)
+            // Apply settings to spot group from working copy
+            try { _numServerPort.Value = Math.Max(_numServerPort.Minimum, Math.Min(_numServerPort.Maximum, _working.LocalServerPort)); } catch { }
+            _chkServerEnabled.Checked = _working.LocalServerEnabled;
+            _chkDebugLog.Checked = _working.DebugLogEnabled; // initial debug logging state (default false if unset)
 
             // Distance units checkbox
-            try { _chkUseKm.Checked = _settings.UseKilometers; } catch { _chkUseKm.Checked = false; }
-            try { _chkCtyBoot.Checked = _settings.CheckCtyOnBoot; } catch { _chkCtyBoot.Checked = true; }
+            try { _chkUseKm.Checked = _working.UseKilometers; } catch { _chkUseKm.Checked = false; }
+            try { _chkCtyBoot.Checked = _working.CheckCtyOnBoot; } catch { _chkCtyBoot.Checked = true; }
 
             // User profile fields
-            _txtMyCall.Text = _settings.MyCall;
+            _txtMyCall.Text = _working.MyCall;
             _txtMyCall.CharacterCasing = CharacterCasing.Upper;
-            _txtName.Text = _settings.Name;
-            _numGmt.Value = Math.Max(_numGmt.Minimum, Math.Min(_numGmt.Maximum, _settings.GmtOffsetHours));
-            _txtQth.Text = _settings.QTH;
-            _txtGrid.Text = _settings.GridSquare;
+            _txtName.Text = _working.Name;
+            _numGmt.Value = Math.Max(_numGmt.Minimum, Math.Min(_numGmt.Maximum, _working.GmtOffsetHours));
+            _txtQth.Text = _working.QTH;
+            _txtGrid.Text = _working.GridSquare;
             _txtGrid.CharacterCasing = CharacterCasing.Upper;
 
             // Colors (list + strongly-typed model for designer/property binding)
@@ -368,18 +373,18 @@ namespace ZVClusterApp.WinForms {
 
             // CAT controls (populate every open)
             PopulateCatControls();
-            _chkCatEnabled.Checked = _settings.CatEnabled;
-            _numCiv.Value = _settings.IcomAddress;
+            _chkCatEnabled.Checked = _working.CatEnabled;
+            _numCiv.Value = _working.IcomAddress;
 
             // CTY.DAT boot check
-            _chkCtyBoot.Checked = _settings.CheckCtyOnBoot;
+            _chkCtyBoot.Checked = _working.CheckCtyOnBoot;
 
             // Appearance - seed current DX list font sample
             try
             {
-                var curFamily = _settings.Ui?.DxListFontFamily;
-                var curSize = _settings.Ui?.DxListFontSize;
-                var curStyle = _settings.Ui?.DxListFontStyle ?? FontStyle.Regular;
+                var curFamily = _working.Ui?.DxListFontFamily;
+                var curSize = _working.Ui?.DxListFontSize;
+                var curStyle = _working.Ui?.DxListFontStyle ?? FontStyle.Regular;
                 if (!string.IsNullOrWhiteSpace(curFamily) && curSize.HasValue && curSize.Value > 4f)
                 {
                     _pendingDxListFont = new Font(curFamily!, curSize!.Value, curStyle, GraphicsUnit.Point);
@@ -437,8 +442,8 @@ namespace ZVClusterApp.WinForms {
                 _cmbCatPort.Items.Clear();
                 foreach (var p in ports) _cmbCatPort.Items.Add(p);
                 _cmbCatPort.EndUpdate();
-                if (!string.IsNullOrWhiteSpace(_settings.CatPort)) {
-                    int idx = _cmbCatPort.FindStringExact(_settings.CatPort);
+                if (!string.IsNullOrWhiteSpace(_working.CatPort)) {
+                    int idx = _cmbCatPort.FindStringExact(_working.CatPort);
                     _cmbCatPort.SelectedIndex = idx >= 0 ? idx : (_cmbCatPort.Items.Count > 0 ? 0 : -1);
                 } else {
                     _cmbCatPort.SelectedIndex = _cmbCatPort.Items.Count > 0 ? 0 : -1;
@@ -450,7 +455,7 @@ namespace ZVClusterApp.WinForms {
                 _cmbCatBaud.Items.Clear();
                 foreach (var b in bauds) _cmbCatBaud.Items.Add(b);
                 _cmbCatBaud.EndUpdate();
-                int bidx = _cmbCatBaud.FindStringExact(_settings.CatBaud.ToString());
+                int bidx = _cmbCatBaud.FindStringExact(_working.CatBaud.ToString());
                 _cmbCatBaud.SelectedIndex = bidx >= 0 ? bidx : (_cmbCatBaud.Items.Count > 0 ? 0 : -1);
 
                 // Rig types
@@ -460,7 +465,7 @@ namespace ZVClusterApp.WinForms {
                 _cmbRig.EndUpdate();
                 int ridx = -1;
                 for (int i = 0; i < _cmbRig.Items.Count; i++) {
-                    if (_cmbRig.Items[i] is RigType rt && rt == _settings.Rig) { ridx = i; break; }
+                    if (_cmbRig.Items[i] is RigType rt && rt == _working.Rig) { ridx = i; break; }
                 }
                 _cmbRig.SelectedIndex = ridx >= 0 ? ridx : 0;
             } catch { }
@@ -503,7 +508,7 @@ namespace ZVClusterApp.WinForms {
         private void PopulateColorsList() {
             _lvColors.Items.Clear();
             foreach (var band in BandOrder) {
-                if (!_settings.BandColors.TryGetValue(band, out var hex)) continue;
+                if (!_working.BandColors.TryGetValue(band, out var hex)) continue;
                 var it = new ListViewItem(band);
                 it.SubItems.Add(hex);
                 try { var c = ColorTranslator.FromHtml(hex); it.BackColor = c; it.ForeColor = c.GetBrightness() < 0.5f ? Color.White : Color.Black; } catch { }
@@ -514,17 +519,18 @@ namespace ZVClusterApp.WinForms {
         private void EnsureBandColors() {
             bool changed = false;
             foreach (var band in BandOrder) {
-                if (!_settings.BandColors.ContainsKey(band)) { var c = _settings.ColorForBand(band); _settings.SetBandColor(band, c); changed = true; }
+                if (!_working.BandColors.ContainsKey(band)) { var c = _working.ColorForBand(band); _working.SetBandColor(band, c); changed = true; }
             }
-            if (changed) AppSettings.Save(_settings);
+            // Do not persist while dialog is open
+            if (changed) { /* delayed until OK */ }
         }
 
         private void EnsureDefaultClusterAndPrimary() {
-            if (_settings.Clusters == null) _settings.Clusters = new();
-            if (_settings.Clusters.Count == 0) {
+            if (_working.Clusters == null) _working.Clusters = new();
+            if (_working.Clusters.Count == 0) {
                 var def = new ClusterDefinition { Name = "dxcluster.org", Host = "dxcluster.org", Port = 7000, AutoLogin = false, Format = ClusterFormat.DXSpider };
-                _settings.Clusters.Add(def);
-                AppSettings.Save(_settings);
+                _working.Clusters.Add(def);
+                // Do not save here; delayed until OK
             }
         }
 
@@ -539,11 +545,11 @@ namespace ZVClusterApp.WinForms {
             if (_lvColors.SelectedItems.Count == 0) { MessageBox.Show(this, "Select a band first."); return; }
             var it = _lvColors.SelectedItems[0];
             var band = it.Text;
-            var current = _settings.BandColors.TryGetValue(band, out var hex) ? hex : "#FFFFFF";
+            var current = _working.BandColors.TryGetValue(band, out var hex) ? hex : "#FFFFFF";
             using var dlg = new ColorDialog();
             try { dlg.Color = ColorTranslator.FromHtml(current); } catch { }
             if (dlg.ShowDialog(this) == DialogResult.OK) {
-                _settings.SetBandColor(band, dlg.Color);
+                _working.SetBandColor(band, dlg.Color);
                 var newHex = ColorTranslator.ToHtml(dlg.Color);
                 it.SubItems[1].Text = newHex;
                 try { it.BackColor = dlg.Color; it.ForeColor = dlg.Color.GetBrightness() < 0.5f ? Color.White : Color.Black; } catch { }
@@ -554,88 +560,90 @@ namespace ZVClusterApp.WinForms {
         private void BtnOk_Click(object? sender, EventArgs e) => SaveAndClose();
 
         private void SaveAndClose() {
-            // Persist colors from list view (authoritative)
+            // Persist colors from list view (authoritative) to working copy
             foreach (ListViewItem it in _lvColors.Items) {
                 if (it.SubItems.Count < 2) continue;
                 var band = it.Text;
                 var hex = it.SubItems[1].Text;
                 if (string.IsNullOrWhiteSpace(band) || string.IsNullOrWhiteSpace(hex)) continue;
-                _settings.BandColors[band] = hex.Trim();
+                _working.BandColors[band] = hex.Trim();
             }
 
-            // Spot group
-            _settings.LocalServerPort = (int)_numServerPort.Value;
-            _settings.UseKilometers = _chkUseKm.Checked;
-            _settings.CheckCtyOnBoot = _chkCtyBoot.Checked;
-            _settings.LocalServerEnabled = _chkServerEnabled.Checked;
-            _settings.DebugLogEnabled = _chkDebugLog.Checked;
+            // Spot group -> working copy
+            _working.LocalServerPort = (int)_numServerPort.Value;
+            _working.UseKilometers = _chkUseKm.Checked;
+            _working.CheckCtyOnBoot = _chkCtyBoot.Checked;
+            _working.LocalServerEnabled = _chkServerEnabled.Checked;
+            _working.DebugLogEnabled = _chkDebugLog.Checked;
 
-            // Persist user profile
-            _settings.MyCall = (_txtMyCall.Text ?? string.Empty).Trim().ToUpperInvariant();
-            _settings.Name = _txtName.Text.Trim();
-            _settings.GmtOffsetHours = (int)_numGmt.Value;
-            _settings.QTH = _txtQth.Text.Trim();
-            _settings.GridSquare = (_txtGrid.Text ?? string.Empty).Trim().ToUpperInvariant();
+            // Persist user profile -> working copy
+            _working.MyCall = (_txtMyCall.Text ?? string.Empty).Trim().ToUpperInvariant();
+            _working.Name = _txtName.Text.Trim();
+            _working.GmtOffsetHours = (int)_numGmt.Value;
+            _working.QTH = _txtQth.Text.Trim();
+            _working.GridSquare = (_txtGrid.Text ?? string.Empty).Trim().ToUpperInvariant();
 
-            // Persist AutoLogin states (ensure single true)
+            // Persist AutoLogin states (ensure single true) -> working copy
             bool foundTrue = false;
             foreach (ListViewItem it in _lvClusters.Items) {
-                var idx = _settings.Clusters.FindIndex(c => c.Name.Equals(it.Text, StringComparison.OrdinalIgnoreCase));
+                var idx = _working.Clusters.FindIndex(c => c.Name.Equals(it.Text, StringComparison.OrdinalIgnoreCase));
                 if (idx >= 0) {
                     bool al = string.Equals(it.SubItems[3].Text, "Yes", StringComparison.OrdinalIgnoreCase);
                     if (al) {
                         if (!foundTrue) foundTrue = true; else { al = false; it.SubItems[3].Text = "No"; }
                     }
-                    var c = _settings.Clusters[idx];
-                    _settings.Clusters[idx] = c with { AutoLogin = al };
+                    var c = _working.Clusters[idx];
+                    _working.Clusters[idx] = c with { AutoLogin = al };
                 }
             }
 
-            // Persist CAT selections
+            // Persist CAT selections -> working copy
             try {
-                _settings.CatEnabled = _chkCatEnabled.Checked;
-                _settings.IcomAddress = (byte)_numCiv.Value;
-                _settings.CatPort = _cmbCatPort.SelectedItem as string ?? _settings.CatPort;
-                if (_cmbCatBaud.SelectedItem is int bi) _settings.CatBaud = bi; else if (int.TryParse(_cmbCatBaud.SelectedItem?.ToString(), out var bval)) _settings.CatBaud = bval;
-                if (_cmbRig.SelectedItem is RigType rtSel) _settings.Rig = rtSel; else if (Enum.TryParse<RigType>(_cmbRig.SelectedItem?.ToString(), out var rtParsed)) _settings.Rig = rtParsed;
+                _working.CatEnabled = _chkCatEnabled.Checked;
+                _working.IcomAddress = (byte)_numCiv.Value;
+                _working.CatPort = _cmbCatPort.SelectedItem as string ?? _working.CatPort;
+                if (_cmbCatBaud.SelectedItem is int bi) _working.CatBaud = bi; else if (int.TryParse(_cmbCatBaud.SelectedItem?.ToString(), out var bval)) _working.CatBaud = bval;
+                if (_cmbRig.SelectedItem is RigType rtSel) _working.Rig = rtSel; else if (Enum.TryParse<RigType>(_cmbRig.SelectedItem?.ToString(), out var rtParsed)) _working.Rig = rtParsed;
             } catch { }
 
-            // Persist Appearance (DX list font)
+            // Persist Appearance (DX list font) -> working copy
             try
             {
-                _settings.Ui ??= new UiSettings();
+                _working.Ui ??= new UiSettings();
                 if (_pendingDxListFont != null)
                 {
-                    _settings.Ui.DxListFontFamily = _pendingDxListFont.FontFamily.Name;
-                    _settings.Ui.DxListFontSize = _pendingDxListFont.SizeInPoints;
-                    _settings.Ui.DxListFontStyle = _pendingDxListFont.Style;
+                    _working.Ui.DxListFontFamily = _pendingDxListFont.FontFamily.Name;
+                    _working.Ui.DxListFontSize = _pendingDxListFont.SizeInPoints;
+                    _working.Ui.DxListFontStyle = _pendingDxListFont.Style;
                 }
                 else
                 {
-                    _settings.Ui.DxListFontFamily = null;
-                    _settings.Ui.DxListFontSize = null;
-                    _settings.Ui.DxListFontStyle = FontStyle.Regular;
+                    _working.Ui.DxListFontFamily = null;
+                    _working.Ui.DxListFontSize = null;
+                    _working.Ui.DxListFontStyle = FontStyle.Regular;
                 }
             }
             catch { }
 
+            // Apply working copy back to original and persist to disk
+            ApplyWorkingToOriginal(_working, _settings);
             AppSettings.Save(_settings);
             DialogResult = DialogResult.OK; Close();
         }
 
         private void SyncDesignerColorsFromSettings() {
-            // Populate strongly-typed properties from the JSON settings
-            DesignerColors.C160m = _settings.BandColors.TryGetValue("160m", out var b160) ? b160 : "#4E342E";
-            DesignerColors.C80m = _settings.BandColors.TryGetValue("80m", out var b80) ? b80 : "#9C27B0";
-            DesignerColors.C60m = _settings.BandColors.TryGetValue("60m", out var b60) ? b60 : "#009688";
-            DesignerColors.C40m = _settings.BandColors.TryGetValue("40m", out var b40) ? b40 : "#2196F3";
-            DesignerColors.C30m = _settings.BandColors.TryGetValue("30m", out var b30) ? b30 : "#00BCD4";
-            DesignerColors.C20m = _settings.BandColors.TryGetValue("20m", out var b20) ? b20 : "#4CAF50";
-            DesignerColors.C17m = _settings.BandColors.TryGetValue("17m", out var b17) ? b17 : "#8BC34A";
-            DesignerColors.C15m = _settings.BandColors.TryGetValue("15m", out var b15) ? b15 : "#E65100";
-            DesignerColors.C12m = _settings.BandColors.TryGetValue("12m", out var b12) ? b12 : "#FFEB3B";
-            DesignerColors.C10m = _settings.BandColors.TryGetValue("10m", out var b10) ? b10 : "#D32F2F";
-            DesignerColors.C6m = _settings.BandColors.TryGetValue("6m", out var b6) ? b6 : "#3F51B5";
+            // Populate strongly-typed properties from the working settings
+            DesignerColors.C160m = _working.BandColors.TryGetValue("160m", out var b160) ? b160 : "#4E342E";
+            DesignerColors.C80m = _working.BandColors.TryGetValue("80m", out var b80) ? b80 : "#9C27B0";
+            DesignerColors.C60m = _working.BandColors.TryGetValue("60m", out var b60) ? b60 : "#009688";
+            DesignerColors.C40m = _working.BandColors.TryGetValue("40m", out var b40) ? b40 : "#2196F3";
+            DesignerColors.C30m = _working.BandColors.TryGetValue("30m", out var b30) ? b30 : "#00BCD4";
+            DesignerColors.C20m = _working.BandColors.TryGetValue("20m", out var b20) ? b20 : "#4CAF50";
+            DesignerColors.C17m = _working.BandColors.TryGetValue("17m", out var b17) ? b17 : "#8BC34A";
+            DesignerColors.C15m = _working.BandColors.TryGetValue("15m", out var b15) ? b15 : "#E65100";
+            DesignerColors.C12m = _working.BandColors.TryGetValue("12m", out var b12) ? b12 : "#FFEB3B";
+            DesignerColors.C10m = _working.BandColors.TryGetValue("10m", out var b10) ? b10 : "#D32F2F";
+            DesignerColors.C6m = _working.BandColors.TryGetValue("6m", out var b6) ? b6 : "#3F51B5";
         }
 
         private void SetDesignerColor(string band, string hex) {
@@ -658,7 +666,7 @@ namespace ZVClusterApp.WinForms {
             try {
                 _lvClusters.BeginUpdate();
                 _lvClusters.Items.Clear();
-                foreach (var c in _settings.Clusters) {
+                foreach (var c in _working.Clusters) {
                     var it = new ListViewItem(c.Name);
                     it.SubItems.Add(c.Host);
                     it.SubItems.Add(c.Port.ToString());
@@ -675,19 +683,19 @@ namespace ZVClusterApp.WinForms {
         {
             var hit = _lvClusters.HitTest(e.Location);
             if (hit.Item == null) return;
-            int idx = _settings.Clusters.FindIndex(c => c.Name == hit.Item.Text);
+            int idx = _working.Clusters.FindIndex(c => c.Name == hit.Item.Text);
             if (idx < 0) return;
-            using var ed = new ClusterEditorForm(_settings.Clusters[idx]);
+            using var ed = new ClusterEditorForm(_working.Clusters[idx]);
             if (ed.ShowDialog(this) == DialogResult.OK)
             {
                 var updated = ed.Def;
                 if (updated.AutoLogin)
                 {
-                    for (int i = 0; i < _settings.Clusters.Count; i++)
-                        if (i != idx) _settings.Clusters[i] = _settings.Clusters[i] with { AutoLogin = false };
+                    for (int i = 0; i < _working.Clusters.Count; i++)
+                        if (i != idx) _working.Clusters[i] = _working.Clusters[i] with { AutoLogin = false };
                 }
-                _settings.Clusters[idx] = updated;
-                AppSettings.Save(_settings);
+                _working.Clusters[idx] = updated;
+                // No save here; will persist on OK
                 RefreshClustersList();
             }
         }
@@ -700,11 +708,11 @@ namespace ZVClusterApp.WinForms {
                 var def = ed.Def;
                 if (def.AutoLogin)
                 {
-                    for (int i = 0; i < _settings.Clusters.Count; i++)
-                        _settings.Clusters[i] = _settings.Clusters[i] with { AutoLogin = false };
+                    for (int i = 0; i < _working.Clusters.Count; i++)
+                        _working.Clusters[i] = _working.Clusters[i] with { AutoLogin = false };
                 }
-                _settings.Clusters.Add(def);
-                AppSettings.Save(_settings);
+                _working.Clusters.Add(def);
+                // No save here; will persist on OK
                 RefreshClustersList();
                 _lvClusters.Sort();
             }
@@ -714,19 +722,19 @@ namespace ZVClusterApp.WinForms {
         {
             if (_lvClusters.SelectedItems.Count == 0) return;
             var it = _lvClusters.SelectedItems[0];
-            int idx = _settings.Clusters.FindIndex(c => c.Name == it.Text);
+            int idx = _working.Clusters.FindIndex(c => c.Name == it.Text);
             if (idx < 0) return;
-            using var ed = new ClusterEditorForm(_settings.Clusters[idx]);
+            using var ed = new ClusterEditorForm(_working.Clusters[idx]);
             if (ed.ShowDialog(this) == DialogResult.OK)
             {
                 var updated = ed.Def;
                 if (updated.AutoLogin)
                 {
-                    for (int i = 0; i < _settings.Clusters.Count; i++)
-                        if (i != idx) _settings.Clusters[i] = _settings.Clusters[i] with { AutoLogin = false };
+                    for (int i = 0; i < _working.Clusters.Count; i++)
+                        if (i != idx) _working.Clusters[i] = _working.Clusters[i] with { AutoLogin = false };
                 }
-                _settings.Clusters[idx] = updated;
-                AppSettings.Save(_settings);
+                _working.Clusters[idx] = updated;
+                // No save here; will persist on OK
                 RefreshClustersList();
                 _lvClusters.Sort();
             }
@@ -736,11 +744,11 @@ namespace ZVClusterApp.WinForms {
         {
             if (_lvClusters.SelectedItems.Count == 0) return;
             var it = _lvClusters.SelectedItems[0];
-            int idx = _settings.Clusters.FindIndex(c => c.Name == it.Text);
+            int idx = _working.Clusters.FindIndex(c => c.Name == it.Text);
             if (idx >= 0)
             {
-                _settings.Clusters.RemoveAt(idx);
-                AppSettings.Save(_settings);
+                _working.Clusters.RemoveAt(idx);
+                // No save here; will persist on OK
                 RefreshClustersList();
             }
         }
@@ -778,19 +786,142 @@ namespace ZVClusterApp.WinForms {
             {
                 foreach (ListViewItem it in _lvClusters.Items)
                     if (it != hit.Item) it.SubItems[3].Text = "No";
-                for (int i = 0; i < _settings.Clusters.Count; i++)
-                    if (!_settings.Clusters[i].Name.Equals(hit.Item.Text, StringComparison.OrdinalIgnoreCase))
-                        _settings.Clusters[i] = _settings.Clusters[i] with { AutoLogin = false };
+                for (int i = 0; i < _working.Clusters.Count; i++)
+                    if (!_working.Clusters[i].Name.Equals(hit.Item.Text, StringComparison.OrdinalIgnoreCase))
+                        _working.Clusters[i] = _working.Clusters[i] with { AutoLogin = false };
             }
             hit.Item.SubItems[3].Text = newVal ? "Yes" : "No";
-            int idx = _settings.Clusters.FindIndex(c => c.Name.Equals(hit.Item.Text, StringComparison.OrdinalIgnoreCase));
+            int idx = _working.Clusters.FindIndex(c => c.Name.Equals(hit.Item.Text, StringComparison.OrdinalIgnoreCase));
             if (idx >= 0)
             {
-                _settings.Clusters[idx] = _settings.Clusters[idx] with { AutoLogin = newVal };
-                AppSettings.Save(_settings);
+                _working.Clusters[idx] = _working.Clusters[idx] with { AutoLogin = newVal };
             }
             _lvClusters.Invalidate();
         }
+
+        // Helpers to clone and apply settings --------------------------------------
+        private static AppSettings CloneSettings(AppSettings src)
+        {
+            var dst = new AppSettings
+            {
+                // Scalars
+                LastConnectedCluster = src.LastConnectedCluster,
+                LocalServerPort = src.LocalServerPort,
+                LocalServerEnabled = src.LocalServerEnabled,
+                DebugLogEnabled = src.DebugLogEnabled,
+                MyCall = src.MyCall,
+                Name = src.Name,
+                GmtOffsetHours = src.GmtOffsetHours,
+                QTH = src.QTH,
+                GridSquare = src.GridSquare,
+                TrackFromUs = src.TrackFromUs,
+                TrackFromDx = src.TrackFromDx,
+                CatEnabled = src.CatEnabled,
+                CatPort = src.CatPort,
+                CatBaud = src.CatBaud,
+                Rig = src.Rig,
+                IcomAddress = src.IcomAddress,
+                UseKilometers = src.UseKilometers,
+                SettingsLeft = src.SettingsLeft,
+                SettingsTop = src.SettingsTop,
+                SettingsOffsetX = src.SettingsOffsetX,
+                SettingsOffsetY = src.SettingsOffsetY,
+                CheckCtyOnBoot = src.CheckCtyOnBoot
+            };
+
+            // Arrays
+            dst.MyClusters = (src.MyClusters != null) ? src.MyClusters.ToArray() : Array.Empty<string>();
+            dst.TrackBands = (src.TrackBands != null) ? src.TrackBands.ToArray() : Array.Empty<string>();
+
+            // Collections
+            dst.Clusters = src.Clusters != null ? src.Clusters.Select(c => c with { }).ToList() : new();
+            dst.BandColors = src.BandColors != null ? src.BandColors.ToDictionary(k => k.Key, v => v.Value, StringComparer.OrdinalIgnoreCase) : new();
+
+            // UiSettings deep copy
+            if (src.Ui != null)
+            {
+                dst.Ui = new UiSettings
+                {
+                    Left = src.Ui.Left,
+                    Top = src.Ui.Top,
+                    Width = src.Ui.Width,
+                    Height = src.Ui.Height,
+                    WindowState = src.Ui.WindowState,
+                    SplitterDistance = src.Ui.SplitterDistance,
+                    ColumnWidths = src.Ui.ColumnWidths != null ? src.Ui.ColumnWidths.ToArray() : Array.Empty<int>(),
+                    EnabledBands = src.Ui.EnabledBands != null ? src.Ui.EnabledBands.ToArray() : Array.Empty<string>(),
+                    EnabledModes = src.Ui.EnabledModes != null ? src.Ui.EnabledModes.ToArray() : new[] { "CW", "SSB", "DAT" },
+                    ConsoleFontFamily = src.Ui.ConsoleFontFamily,
+                    ConsoleFontSize = src.Ui.ConsoleFontSize,
+                    ConsoleForeColor = src.Ui.ConsoleForeColor,
+                    ConsoleBackColor = src.Ui.ConsoleBackColor,
+                    DxListFontFamily = src.Ui.DxListFontFamily,
+                    DxListFontSize = src.Ui.DxListFontSize,
+                    DxListFontStyle = src.Ui.DxListFontStyle
+                };
+            }
+            else dst.Ui = null;
+
+            return dst;
+        }
+
+        private static void ApplyWorkingToOriginal(AppSettings src, AppSettings dst)
+        {
+            // Scalars
+            dst.LastConnectedCluster = src.LastConnectedCluster;
+            dst.LocalServerPort = src.LocalServerPort;
+            dst.LocalServerEnabled = src.LocalServerEnabled;
+            dst.DebugLogEnabled = src.DebugLogEnabled;
+            dst.MyCall = src.MyCall;
+            dst.Name = src.Name;
+            dst.GmtOffsetHours = src.GmtOffsetHours;
+            dst.QTH = src.QTH;
+            dst.GridSquare = src.GridSquare;
+            dst.TrackFromUs = src.TrackFromUs;
+            dst.TrackFromDx = src.TrackFromDx;
+            dst.CatEnabled = src.CatEnabled;
+            dst.CatPort = src.CatPort;
+            dst.CatBaud = src.CatBaud;
+            dst.Rig = src.Rig;
+            dst.IcomAddress = src.IcomAddress;
+            dst.UseKilometers = src.UseKilometers;
+            // Preserve SettingsLeft/Top already updated in OnFormClosing
+            dst.SettingsOffsetX = src.SettingsOffsetX;
+            dst.SettingsOffsetY = src.SettingsOffsetY;
+            dst.CheckCtyOnBoot = src.CheckCtyOnBoot;
+
+            // Arrays
+            dst.MyClusters = (src.MyClusters != null) ? src.MyClusters.ToArray() : Array.Empty<string>();
+            dst.TrackBands = (src.TrackBands != null) ? src.TrackBands.ToArray() : Array.Empty<string>();
+
+            // Collections
+            dst.Clusters = src.Clusters != null ? src.Clusters.Select(c => c with { }).ToList() : new();
+            dst.BandColors = src.BandColors != null ? src.BandColors.ToDictionary(k => k.Key, v => v.Value, StringComparer.OrdinalIgnoreCase) : new();
+
+            // UiSettings deep copy
+            if (src.Ui != null)
+            {
+                dst.Ui ??= new UiSettings();
+                dst.Ui.Left = src.Ui.Left;
+                dst.Ui.Top = src.Ui.Top;
+                dst.Ui.Width = src.Ui.Width;
+                dst.Ui.Height = src.Ui.Height;
+                dst.Ui.WindowState = src.Ui.WindowState;
+                dst.Ui.SplitterDistance = src.Ui.SplitterDistance;
+                dst.Ui.ColumnWidths = src.Ui.ColumnWidths != null ? src.Ui.ColumnWidths.ToArray() : Array.Empty<int>();
+                dst.Ui.EnabledBands = src.Ui.EnabledBands != null ? src.Ui.EnabledBands.ToArray() : Array.Empty<string>();
+                dst.Ui.EnabledModes = src.Ui.EnabledModes != null ? src.Ui.EnabledModes.ToArray() : new[] { "CW", "SSB", "DAT" };
+                dst.Ui.ConsoleFontFamily = src.Ui.ConsoleFontFamily;
+                dst.Ui.ConsoleFontSize = src.Ui.ConsoleFontSize;
+                dst.Ui.ConsoleForeColor = src.Ui.ConsoleForeColor;
+                dst.Ui.ConsoleBackColor = src.Ui.ConsoleBackColor;
+                dst.Ui.DxListFontFamily = src.Ui.DxListFontFamily;
+                dst.Ui.DxListFontSize = src.Ui.DxListFontSize;
+                dst.Ui.DxListFontStyle = src.Ui.DxListFontStyle;
+            }
+            else dst.Ui = null;
+        }
+
         // Strongly-typed colors object that can be inspected/bound in a designer/property grid
         public class BandColorsModel {
             [DisplayName("160m")] public string C160m { get; set; } = "#4E342E";
