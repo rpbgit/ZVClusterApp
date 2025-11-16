@@ -401,11 +401,19 @@ namespace ZVClusterApp.WinForms {
             AdjustFormSizeToContent();
         }
 
+        private static Font CreateDefaultDxListFont()
+        {
+            // Change this to your desired default
+            // return new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+            return new Font("Segoe UI Semibold", 9f, FontStyle.Bold, GraphicsUnit.Point);
+
+        }
+
         private void UpdateDxFontSampleLabel()
         {
             try
             {
-                var f = _pendingDxListFont ?? new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+                var f = _pendingDxListFont ?? CreateDefaultDxListFont();
                 _lblDxFontSample.Font = f;
                 _lblDxFontSample.Text = $"{f.Name}, {f.SizeInPoints:0.#}pt {f.Style}";
             }
@@ -423,7 +431,7 @@ namespace ZVClusterApp.WinForms {
                     FontMustExist = true,
                     MinSize = 6,
                     MaxSize = 48,
-                    Font = _pendingDxListFont ?? new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point)
+                    Font = _pendingDxListFont ?? CreateDefaultDxListFont()
                 };
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {

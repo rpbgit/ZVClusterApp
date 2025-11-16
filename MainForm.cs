@@ -227,7 +227,7 @@ namespace ZVClusterApp.WinForms
                 {
                     new ColumnHeader { Text = "DX Call", Width = 100 },   // 0
                     new ColumnHeader { Text = "Freq", Width = 80 },       // 1
-                    new ColumnHeader { Text = "Time", Width = 55 },       // 2
+                    new ColumnHeader { Text = "Time", Width = 60 },       // 2
                     new ColumnHeader { Text = "Country", Width = 140 },   // 3
                     new ColumnHeader { Text = "Dist", Width = 65 },       // 4
                     new ColumnHeader { Text = "Bearing", Width = 70 },    // 5
