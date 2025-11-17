@@ -127,6 +127,10 @@ namespace ZVClusterApp.WinForms
             var miView = new ToolStripMenuItem("View");
             var miHelp = new ToolStripMenuItem("Help");
             menu.Items.AddRange(new ToolStripItem[] { miFile, miView, miHelp });
+            
+            // File -> Exit
+            var miExit = new ToolStripMenuItem("Exit", null, MiExit_Click) { ShortcutKeys = Keys.Alt | Keys.F4 };
+            miFile.DropDownItems.Add(miExit);
 
             // Add Settings under View menu
             var miSettings = new ToolStripMenuItem("Settings...", null, BtnSettings_Click);
@@ -1962,6 +1966,10 @@ namespace ZVClusterApp.WinForms
             catch { }
         }
 
+        private void MiExit_Click(object? sender, EventArgs e)
+        {
+            try { Close(); } catch { Application.Exit(); }
+        }
     }
 
     internal sealed class BandColorRenderer : ToolStripProfessionalRenderer

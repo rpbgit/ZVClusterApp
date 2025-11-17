@@ -28,6 +28,9 @@
     <Compile Remove="SettingsForm.Designer.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Remove="Properties\PublishProfiles\FolderProfile - Copy.pubxmlORIGINAL" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="alfred-e-newman-how-to-solder.ico" />
     <PackageReference Include="System.Text.Json" Version="9.0.10" />
     <PackageReference Include="System.IO.Ports" Version="9.0.10" />
