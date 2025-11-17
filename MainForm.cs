@@ -72,6 +72,12 @@ namespace ZVClusterApp.WinForms
         // Shortcut context menu for console input
         private ContextMenuStrip? _shortcutMenu;
 
+        // NEW: Favorites
+        private ToolStripButton _btnFavorites = null!;
+        private bool _favoritesOnly = false;
+        private readonly List<string> _favoritePatterns = new();
+        private List<Regex> _favoriteRegexes = new();
+
         // === Helpers for Info column sizing ===
         private bool ListViewHasVScroll()
         {
@@ -106,6 +112,10 @@ namespace ZVClusterApp.WinForms
             _layoutRefreshTimer = new System.Windows.Forms.Timer { Interval = 100, Enabled = false }; _layoutRefreshTimer.Tick += (s, e) => { _layoutRefreshTimer!.Stop(); RepaintSpotsAfterLayout(); SaveUiSettings(); };
             if (_settings.Ui?.SplitterDistance > 0) { try { _split.SplitterDistance = _settings.Ui.SplitterDistance; } catch { } }
             RestoreBandFiltersFromSettings(); RestoreModeFiltersFromSettings();
+
+            // NEW: load favorites
+            LoadFavoritesFromSettings();
+
             if (_settings.Ui != null)
             {
                 try
@@ -293,6 +303,19 @@ namespace ZVClusterApp.WinForms
                 _modeButtons.Add(mb); _status.Items.Add(mb);
             }
 
+            // NEW: Favorites button (before bands)
+            _btnFavorites = new ToolStripButton("Fav")
+            {
+                CheckOnClick = true,
+                Checked = false,
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                ToolTipText = "DX Favorites filter: show only matching DX calls. Right-click to edit list."
+            };
+            _btnFavorites.Click += (s, e) => ToggleFavoritesFilter(_btnFavorites.Checked);
+            _btnFavorites.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) OpenFavoritesEditor(); };
+            //_status.Items.Add(new ToolStripStatusLabel { Text = " | Fav:" });
+            _status.Items.Add(_btnFavorites);
+
             _knownBands = (_settings.TrackBands != null && _settings.TrackBands.Length > 0) ? _settings.TrackBands : new[] { "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m" };
             _enabledBands.Clear();
             foreach (var bnd in _knownBands)
@@ -311,8 +334,10 @@ namespace ZVClusterApp.WinForms
             _txtConsoleInput.Text = InputPrompt;
             MoveCaretToEnd();
             UpdateClusterIndicator();
+            UpdateFavoritesButtonVisual();
         }
 
+        // Menu item handlers (implemented)
         private void MiDxpCalendar_Click(object? sender, EventArgs e)
         {
             try
@@ -345,7 +370,6 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        // NEW: SolarHam (solar conditions) shortcut
         private void MiSolarHam_Click(object? sender, EventArgs e)
         {
             try
@@ -362,7 +386,6 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        // NEW: Contest Calendar shortcut
         private void MiContestCalendar_Click(object? sender, EventArgs e)
         {
             try
@@ -393,13 +416,9 @@ namespace ZVClusterApp.WinForms
                     return s;
                 }
 
-                // Prefer the entry assembly (host) for versioning info
                 var entry = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-
-                // 1) InformationalVersion from assembly attributes (e.g., 1.2.3+abcd)
                 var infoVerRaw = entry.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
-                // 2) File/Product version from the actual process executable (works for single-file)
                 string? productVerRaw = null;
                 string? fileVerRaw = null;
                 try
@@ -417,13 +436,9 @@ namespace ZVClusterApp.WinForms
                 }
                 catch { }
 
-                // 3) Assembly version
                 var asmVerRaw = entry.GetName().Version?.ToString();
-
-                // 4) WinForms convenience fallback
                 var appProductVerRaw = Application.ProductVersion;
 
-                // Choose the first non-empty candidate
                 var infoVer = NormalizeVer(infoVerRaw);
                 if (string.IsNullOrEmpty(infoVer)) infoVer = NormalizeVer(appProductVerRaw);
                 if (string.IsNullOrEmpty(infoVer)) infoVer = NormalizeVer(productVerRaw);
@@ -443,54 +458,113 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        // Extracted button handlers (unchanged logic)
-        private void ModeButtonClicked(string mode, ToolStripButton b)
+        // NEW: Favorites helpers
+
+        private void LoadFavoritesFromSettings()
         {
-            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control; bool shift = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
-            if (ctrl)
+            try
             {
-                if (!_modeSolo) { _modeSolo = true; _soloModeActive = mode; _preModeEnabled = new HashSet<string>(_enabledModes, StringComparer.OrdinalIgnoreCase); _enabledModes.Clear(); _enabledModes.Add(mode); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
-                else if (!string.IsNullOrEmpty(_soloModeActive) && string.Equals(_soloModeActive, mode, StringComparison.OrdinalIgnoreCase)) { _modeSolo = false; _soloModeActive = null; _enabledModes.Clear(); foreach (var m in _preModeEnabled) _enabledModes.Add(m); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
-                else { _soloModeActive = mode; _enabledModes.Clear(); _enabledModes.Add(mode); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
-                return;
+                _favoritePatterns.Clear();
+                if (_settings.FavoriteDxCalls != null)
+                    _favoritePatterns.AddRange(_settings.FavoriteDxCalls.Select(p => (p ?? string.Empty).Trim()).Where(p => p.Length > 0));
+                CompileFavoriteRegexes();
             }
-            if (shift && !ctrl)
-            {
-                // SHIFT+Click: enable all modes (clear solo state)
-                _modeSolo = false; _soloModeActive = null; _enabledModes.Clear();
-                foreach (var mb in _modeButtons) if (!string.IsNullOrWhiteSpace(mb.Text)) _enabledModes.Add(mb.Text);
-                UpdateModeButtonsFromEnabled(); ApplyBandFilter();
-                return;
-            }
-            ToggleModeFilter(mode, b.Checked);
-        }
-        private void BandButtonClicked(string bandName, ToolStripButton tsb)
-        {
-            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control; bool shift = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
-            if (ctrl)
-            {
-                if (!_soloMode) { _soloMode = true; _soloBandActive = bandName; _preSoloEnabled = new HashSet<string>(_enabledBands, StringComparer.OrdinalIgnoreCase); _enabledBands.Clear(); _enabledBands.Add(bandName); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
-                else if (!string.IsNullOrEmpty(_soloBandActive) && string.Equals(_soloBandActive, bandName, StringComparison.OrdinalIgnoreCase)) { _soloMode = false; _soloBandActive = null; _enabledBands.Clear(); foreach (var be in _preSoloEnabled) _enabledBands.Add(be); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
-                else { _soloBandActive = bandName; _enabledBands.Clear(); _enabledBands.Add(bandName); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
-                return;
-            }
-            if (shift && !ctrl)
-            {
-                // SHIFT+Click: enable all bands (clear solo state)
-                _soloMode = false; _soloBandActive = null; _enabledBands.Clear();
-                foreach (var bnd in _knownBands) _enabledBands.Add(bnd);
-                UpdateBandButtonsFromEnabled(); ApplyBandFilter();
-                return;
-            }
-            ToggleBandFilter(bandName, tsb.Checked);
+            catch { }
         }
 
+        private void CompileFavoriteRegexes()
+        {
+            var list = new List<Regex>();
+            foreach (var pat in _favoritePatterns)
+            {
+                try
+                {
+                    // map * -> .*, ? -> .
+                    var rx = "^" + Regex.Escape(pat).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+                    list.Add(new Regex(rx, RegexOptions.IgnoreCase | RegexOptions.Compiled));
+                }
+                catch { }
+            }
+            _favoriteRegexes = list;
+        }
+
+        private void ToggleFavoritesFilter(bool on)
+        {
+            _favoritesOnly = on;
+            UpdateFavoritesButtonVisual();
+            ApplyBandFilter();
+        }
+
+        private void UpdateFavoritesButtonVisual()
+        {
+            try
+            {
+                if (_btnFavorites == null) return;
+                if (_favoritesOnly)
+                {
+                    _btnFavorites.Text = "DX*";
+                    _btnFavorites.BackColor = Color.Gold;
+                    _btnFavorites.ForeColor = Color.Black;
+                }     
+                else
+                {
+                    _btnFavorites.Text = "DX";
+                    _btnFavorites.BackColor = SystemColors.Control;
+                    _btnFavorites.ForeColor = SystemColors.ControlText;
+                }
+            }
+            catch { }
+        }
+
+        private void OpenFavoritesEditor()
+        {
+            try
+            {
+                // Use the same font as the DX list
+                using var dlg = new FavoritesEditForm(_favoritePatterns, _listView.Font);
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    _favoritePatterns.Clear();
+                    _favoritePatterns.AddRange(dlg.Patterns);
+                    CompileFavoriteRegexes();
+                    _settings.FavoriteDxCalls = _favoritePatterns.ToList();
+                    AppSettings.Save(_settings);
+                    ApplyBandFilter();
+                }
+            }
+            catch { }
+            UpdateFavoritesButtonVisual();
+        }
+
+        private bool IsFavoriteCall(string dxCall)
+        {
+            if (_favoriteRegexes == null || _favoriteRegexes.Count == 0) return false;
+            if (string.IsNullOrWhiteSpace(dxCall)) return false;
+            foreach (var rx in _favoriteRegexes)
+            {
+                try { if (rx.IsMatch(dxCall)) return true; } catch { }
+            }
+            return false;
+        }
+
+        private bool FavoritesCondition(ListViewItem it)
+        {
+            if (!_favoritesOnly) return true;
+            try
+            {
+                var dx = it.SubItems.Count > 0 ? (it.SubItems[0].Text ?? string.Empty) : string.Empty;
+                dx = dx.Trim().ToUpperInvariant();
+                return IsFavoriteCall(dx);
+            }
+            catch { return false; }
+        }
+
+        // === Helpers for layout repaint and fillers ===
         private void QueueRepaintSpots()
         {
             try
             {
                 if (_layoutRefreshTimer != null) { _layoutRefreshTimer.Stop(); _layoutRefreshTimer.Start(); }
-                // removed immediate SaveUiSettings to avoid heavy I/O during drag
             }
             catch { }
         }
@@ -516,7 +590,6 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                // Estimate row height; fallback to Font height + padding
                 int h = _listView.Font.Height + 6;
                 if (_listView.Items.Count > 0)
                 {
@@ -535,10 +608,8 @@ namespace ZVClusterApp.WinForms
                 if (_listView.ClientSize.Height <= 0) return;
                 int rowH = GetRowHeight();
                 if (rowH <= 0) return;
-                // compute needed rows to fully cover client height (ceiling)
                 int visibleRows = (int)Math.Ceiling(_listView.ClientSize.Height / (double)rowH);
 
-                // Count current filler items (assumed appended at end)
                 int currentFillers = 0;
                 for (int i = _listView.Items.Count - 1; i >= 0; i--)
                 {
@@ -805,7 +876,7 @@ namespace ZVClusterApp.WinForms
                 _allRows.Add(it);
                 if (_allRows.Count > 5000) _allRows.RemoveRange(0, _allRows.Count - 5000);
 
-                if (ItemBandIsEnabled(it) && ItemModeIsEnabled(it))
+                if (ItemBandIsEnabled(it) && ItemModeIsEnabled(it) && FavoritesCondition(it))
                 {
                     UiUtil.Suspend(_listView);
                     _listView.BeginUpdate();
@@ -902,6 +973,49 @@ namespace ZVClusterApp.WinForms
             return _enabledModes.Contains(mode);
         }
 
+        // Toggle handlers (added)
+        private void ModeButtonClicked(string mode, ToolStripButton b)
+        {
+            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control; bool shift = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
+            if (ctrl)
+            {
+                if (!_modeSolo) { _modeSolo = true; _soloModeActive = mode; _preModeEnabled = new HashSet<string>(_enabledModes, StringComparer.OrdinalIgnoreCase); _enabledModes.Clear(); _enabledModes.Add(mode); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
+                else if (!string.IsNullOrEmpty(_soloModeActive) && string.Equals(_soloModeActive, mode, StringComparison.OrdinalIgnoreCase)) { _modeSolo = false; _soloModeActive = null; _enabledModes.Clear(); foreach (var m in _preModeEnabled) _enabledModes.Add(m); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
+                else { _soloModeActive = mode; _enabledModes.Clear(); _enabledModes.Add(mode); UpdateModeButtonsFromEnabled(); ApplyBandFilter(); }
+                return;
+            }
+            if (shift && !ctrl)
+            {
+                // SHIFT+Click: enable all modes (clear solo state)
+                _modeSolo = false; _soloModeActive = null; _enabledModes.Clear();
+                foreach (var mb in _modeButtons) if (!string.IsNullOrWhiteSpace(mb.Text)) _enabledModes.Add(mb.Text);
+                UpdateModeButtonsFromEnabled(); ApplyBandFilter();
+                return;
+            }
+            ToggleModeFilter(mode, b.Checked);
+        }
+
+        private void BandButtonClicked(string bandName, ToolStripButton tsb)
+        {
+            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control; bool shift = (Control.ModifierKeys & Keys.Shift) == Keys.Shift;
+            if (ctrl)
+            {
+                if (!_soloMode) { _soloMode = true; _soloBandActive = bandName; _preSoloEnabled = new HashSet<string>(_enabledBands, StringComparer.OrdinalIgnoreCase); _enabledBands.Clear(); _enabledBands.Add(bandName); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
+                else if (!string.IsNullOrEmpty(_soloBandActive) && string.Equals(_soloBandActive, bandName, StringComparison.OrdinalIgnoreCase)) { _soloMode = false; _soloBandActive = null; _enabledBands.Clear(); foreach (var be in _preSoloEnabled) _enabledBands.Add(be); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
+                else { _soloBandActive = bandName; _enabledBands.Clear(); _enabledBands.Add(bandName); UpdateBandButtonsFromEnabled(); ApplyBandFilter(); }
+                return;
+            }
+            if (shift && !ctrl)
+            {
+                // SHIFT+Click: enable all bands (clear solo state)
+                _soloMode = false; _soloBandActive = null; _enabledBands.Clear();
+                foreach (var bnd in _knownBands) _enabledBands.Add(bnd);
+                UpdateBandButtonsFromEnabled(); ApplyBandFilter();
+                return;
+            }
+            ToggleBandFilter(bandName, tsb.Checked);
+        }
+
         private void ToggleBandFilter(string band, bool enabled)
         {
             if (enabled)
@@ -932,9 +1046,6 @@ namespace ZVClusterApp.WinForms
             catch { return hz.ToString(CultureInfo.InvariantCulture) + " Hz"; }
         }
 
-        // Back-compat wrapper
-        private static string FormatFrequency(int hz) => FormatFreqHz(hz);
-
         private void ApplyBandFilter()
         {
             try
@@ -943,7 +1054,7 @@ namespace ZVClusterApp.WinForms
                 UiUtil.Suspend(_listView);
                 _listView.BeginUpdate();
                 _listView.Items.Clear();
-                var filtered = _allRows.Where(it => ItemBandIsEnabled(it) && ItemModeIsEnabled(it)).TakeLast(1000);
+                var filtered = _allRows.Where(it => ItemBandIsEnabled(it) && ItemModeIsEnabled(it) && FavoritesCondition(it)).TakeLast(1000);
                 foreach (var src in filtered)
                 {
                     var clone = (ListViewItem)src.Clone();
@@ -1244,7 +1355,8 @@ namespace ZVClusterApp.WinForms
             {
                 if (_listView.SelectedItems.Count == 0) return;
                 var it = _listView.SelectedItems[0];
-                var call = spotter ? it.SubItems[2].Text : it.SubItems[0].Text;
+                var idx = spotter ? 6 : 0; // 6 = Spotter, 0 = DX Call
+                var call = (it.SubItems.Count > idx ? it.SubItems[idx].Text : string.Empty) ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(call)) return;
                 Process.Start(new ProcessStartInfo { FileName = $"https://www.qrz.com/db/{Uri.EscapeDataString(call)}", UseShellExecute = true });
             }
@@ -1255,7 +1367,7 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                if (_listView.SelectedItems.Count == 0) return;
+                if (_listView.IsDisposed || _listView.SelectedItems.Count == 0) return;
                 var it = _listView.SelectedItems[0];
                 var call = it.SubItems[0].Text;
                 if (string.IsNullOrWhiteSpace(call)) return;
@@ -1760,6 +1872,7 @@ namespace ZVClusterApp.WinForms
                 return "CW";
             }
         }
+
         private bool ValidateProfileBeforeConnect()
         {
             try
@@ -1941,7 +2054,7 @@ namespace ZVClusterApp.WinForms
                 {
                     "MYCALL" => (_settings.MyCall ?? string.Empty).ToUpperInvariant(),
                     "CALL" => (_settings.MyCall ?? string.Empty).ToUpperInvariant(),
-                    "GRID" => (_settings.GridSquare ?? string.Empty).ToUpperInvariant(),
+                    "GRID" => (_settings.GridSquare ?? string.Empty).Trim().ToUpperInvariant(),
                     "UTC" => nowUtc.ToString("HHmm", CultureInfo.InvariantCulture),
                     "LOCAL" => local.ToString("HHmm", CultureInfo.InvariantCulture),
                     "DATEUTC" => nowUtc.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
@@ -1990,7 +2103,6 @@ namespace ZVClusterApp.WinForms
                 var g = e.Graphics;
                 var rect = new Rectangle(Point.Empty, e.Item.Size);
 
-                // BAND BUTTONS
                 if (_bands.Contains(btn.Text ?? string.Empty))
                 {
                     var baseColor = _settings.ColorForBand(btn.Text ?? string.Empty);
@@ -2006,7 +2118,6 @@ namespace ZVClusterApp.WinForms
 
                     if (!btn.Checked)
                     {
-                        // X adornment for UNCHECKED bands
                         var xColor = btn.Enabled ? Color.Gainsboro : ControlPaint.Dark(Color.Gainsboro);
                         var prev = g.SmoothingMode;
                         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -2021,11 +2132,10 @@ namespace ZVClusterApp.WinForms
                     return;
                 }
 
-                // MODE BUTTONS - match band visuals for UNCHECKED state (dark grey + X)
                 if (_modes.Contains(btn.Text ?? string.Empty))
                 {
-                    var onColor = Color.FromArgb(96, Color.LightGreen); // keep existing ON look
-                    var uncheckedBack = Color.FromArgb(60, 60, 60);     // dark grey when OFF
+                    var onColor = Color.FromArgb(96, Color.LightGreen);
+                    var uncheckedBack = Color.FromArgb(60, 60, 60);
                     var back = btn.Checked ? onColor : uncheckedBack;
                     var borderColor = btn.Checked ? Color.SeaGreen : Color.DimGray;
 
@@ -2037,7 +2147,6 @@ namespace ZVClusterApp.WinForms
 
                     if (!btn.Checked)
                     {
-                        // X adornment for UNCHECKED modes text
                         var xColor = btn.Enabled ? Color.Gainsboro : ControlPaint.Dark(Color.Gainsboro);
                         var prev = g.SmoothingMode;
                         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -2062,7 +2171,7 @@ namespace ZVClusterApp.WinForms
             if (_bands.Contains(text))
             {
                 if (e.Item is ToolStripButton b && !b.Checked)
-                    e.TextColor = Color.Gainsboro; // better contrast on dark grey
+                    e.TextColor = Color.Gainsboro;
                 else
                 {
                     var c = _settings.ColorForBand(text);
@@ -2071,11 +2180,10 @@ namespace ZVClusterApp.WinForms
             }
             else if (_modes.Contains(text))
             {
-                // Mirror band behavior for UNCHECKED modes text
                 if (e.Item is ToolStripButton b && !b.Checked)
                     e.TextColor = Color.Gainsboro;
                 else
-                    e.TextColor = Color.Black; // readable over light green ON fill
+                    e.TextColor = Color.Black;
             }
 
             base.OnRenderItemText(e);

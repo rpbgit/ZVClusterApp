@@ -116,7 +116,7 @@ namespace ZVClusterApp.WinForms
             ["6m"]   = "#3F51B5", // indigo
         };
 
-        public UiSettings? Ui { get; set; } = new UiSettings { Width = 810, Height = 494, SplitterDistance = 200 };
+        public UiSettings? Ui { get; set; } = new UiSettings { Width = 820, Height = 494, SplitterDistance = 200 };
 
         // Settings window location persistence (absolute)
         public int SettingsLeft { get; set; } = 0;
@@ -128,6 +128,9 @@ namespace ZVClusterApp.WinForms
 
         // Data updates
         public bool CheckCtyOnBoot { get; set; } = true;
+
+        // NEW: Favorites list (DX calls/patterns; supports * and ?)
+        public List<string> FavoriteDxCalls { get; set; } = new();
 
         private const string FileName = "ZVClusterApp.settings.json";
         private static readonly string FilePath = Path.Combine(AppContext.BaseDirectory, FileName);
@@ -158,7 +161,7 @@ namespace ZVClusterApp.WinForms
                         if (s.LocalServerPort == 7300)
                             s.LocalServerPort = 7373;
 
-                        // Normalize TrackBands: ensure canonical ordering and include 60m when appropriate
+                        // Normalize TrackBands
                         var knownBands = new[] { "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m" };
                         if (s.TrackBands == null || s.TrackBands.Length == 0)
                         {
@@ -193,6 +196,20 @@ namespace ZVClusterApp.WinForms
                                 c.CommandShortcuts ??= new List<CommandShortcut>();
                         }
 
+                        // Normalize favorites
+                        s.FavoriteDxCalls ??= new List<string>();
+                        {
+                            var cleaned = new List<string>();
+                            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var f in s.FavoriteDxCalls)
+                            {
+                                var t = (f ?? string.Empty).Trim().ToUpperInvariant();
+                                if (t.Length == 0) continue;
+                                if (seen.Add(t)) cleaned.Add(t);
+                            }
+                            s.FavoriteDxCalls = cleaned;
+                        }
+
                         // Ensure Ui exists and seed DX list font defaults if missing
                         bool changed = false;
                         s.Ui ??= new UiSettings();
@@ -219,7 +236,7 @@ namespace ZVClusterApp.WinForms
             var def = new AppSettings();
             // set sensible defaults for the main spot list columns (DX, Freq, Spotter, Time, Country, Dist, Bearing, Info)
             def.Ui = new UiSettings {
-                Width = 810,
+                Width = 820,
                 Height = 494,
                 SplitterDistance = 200,
                 ColumnWidths = new[] { 100, 80, 100, 60, 160, 70, 120, 165 }
@@ -282,6 +299,7 @@ namespace ZVClusterApp.WinForms
                 }
             });
 
+            def.FavoriteDxCalls = new List<string>(); // default empty
             Save(def);
             return def;
         }
@@ -300,6 +318,20 @@ namespace ZVClusterApp.WinForms
                 {
                     foreach (var c in s.Clusters)
                         c.CommandShortcuts ??= new List<CommandShortcut>();
+                }
+
+                // Normalize favorites before save (preserve original case, distinct ignoring case)
+                s.FavoriteDxCalls ??= new List<string>();
+                {
+                    var cleaned = new List<string>();
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var f in s.FavoriteDxCalls)
+                    {
+                        var t = (f ?? string.Empty).Trim().ToUpperInvariant();
+                        if (t.Length == 0) continue;
+                        if (seen.Add(t)) cleaned.Add(t);
+                    }
+                    s.FavoriteDxCalls = cleaned;
                 }
 
                 var json = JsonSerializer.Serialize(s, new JsonSerializerOptions { WriteIndented = true });
