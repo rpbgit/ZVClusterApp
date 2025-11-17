@@ -403,10 +403,8 @@ namespace ZVClusterApp.WinForms {
 
         private static Font CreateDefaultDxListFont()
         {
-            // Change this to your desired default
-            // return new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
-            return new Font("Segoe UI Semibold", 9f, FontStyle.Bold, GraphicsUnit.Point);
-
+            // Reuse the centralized app default for consistency
+            return AppSettings.CreateDefaultDxListFont();
         }
 
         private void UpdateDxFontSampleLabel()

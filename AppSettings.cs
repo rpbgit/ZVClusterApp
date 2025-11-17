@@ -192,6 +192,24 @@ namespace ZVClusterApp.WinForms
                             foreach (var c in s.Clusters)
                                 c.CommandShortcuts ??= new List<CommandShortcut>();
                         }
+
+                        // Ensure Ui exists and seed DX list font defaults if missing
+                        bool changed = false;
+                        s.Ui ??= new UiSettings();
+                        if (string.IsNullOrWhiteSpace(s.Ui.DxListFontFamily) || !s.Ui.DxListFontSize.HasValue || s.Ui.DxListFontSize.Value <= 4f)
+                        {
+                            var d = CreateDefaultDxListFont();
+                            s.Ui.DxListFontFamily = d.FontFamily.Name;
+                            s.Ui.DxListFontSize = d.SizeInPoints;
+                            s.Ui.DxListFontStyle = d.Style;
+                            changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            try { Save(s); } catch { }
+                        }
+
                         return s;
                     }
                 }
@@ -206,6 +224,16 @@ namespace ZVClusterApp.WinForms
                 SplitterDistance = 200,
                 ColumnWidths = new[] { 100, 80, 100, 60, 160, 70, 120, 165 }
             };
+            // Seed default DX list font in fresh defaults
+            try
+            {
+                var d = CreateDefaultDxListFont();
+                def.Ui.DxListFontFamily = d.FontFamily.Name;
+                def.Ui.DxListFontSize = d.SizeInPoints;
+                def.Ui.DxListFontStyle = d.Style;
+            }
+            catch { }
+
             // Add two default clusters; default AutoLogin set to false for all
             def.Clusters.Add(new ClusterDefinition
             {
@@ -301,6 +329,20 @@ namespace ZVClusterApp.WinForms
             BandColors[band] = ColorTranslator.ToHtml(c);
         }
 
+        // Central app default for the DX list font
+        public static Font CreateDefaultDxListFont()
+        {
+            try
+            {
+                return new Font("Segoe UI Semibold", 9f, FontStyle.Bold, GraphicsUnit.Point);
+            }
+            catch
+            {
+                // Very defensive fallback if the face is missing
+                return SystemFonts.MessageBoxFont;
+            }
+        }
+
         // Helper to construct DX list font based on persisted settings
         public Font GetDxListFontOrDefault(Font fallback)
         {
@@ -315,7 +357,8 @@ namespace ZVClusterApp.WinForms
                 }
             }
             catch { }
-            return fallback;
+            // Return the consistent app default instead of the arbitrary control font
+            return CreateDefaultDxListFont();
         }
     }
 }
