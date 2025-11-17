@@ -645,17 +645,6 @@ namespace ZVClusterApp.WinForms
                     return text;
                 }
 
-                // Safe slice join to avoid negative Take() counts
-                static string SafeJoin(string[] arr, int start, int count)
-                {
-                    if (arr == null || arr.Length == 0) return string.Empty;
-                    if (start < 0) start = 0;
-                    if (count <= 0) return string.Empty;
-                    if (start >= arr.Length) return string.Empty;
-                    int take = Math.Min(count, arr.Length - start);
-                    return string.Join(' ', arr.Skip(start).Take(take));
-                }
-
                 // Try multiple common formats (relaxed callsign pattern)
                 // 1) DX de <spotter>[:]? <freq> <dxcall> ...
                 var m1 = Regex.Match(line,
