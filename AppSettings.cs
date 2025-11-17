@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -25,6 +26,16 @@ namespace ZVClusterApp.WinForms
         public bool AutoLogin { get; init; } = false;
         public string[] DefaultCommands { get; init; } = Array.Empty<string>();
         public ClusterFormat Format { get; set; } = ClusterFormat.Auto;
+        // NEW: Per-cluster command shortcuts (only source of truth)
+        public List<CommandShortcut> CommandShortcuts { get; set; } = new();
+    }
+
+    public record CommandShortcut
+    {
+        // Display name in context menu
+        public string Name { get; set; } = string.Empty;
+        // Raw command text; may contain \n for multiple lines and tokens like {MYCALL}
+        public string Command { get; set; } = string.Empty;
     }
 
     public class UiSettings
@@ -175,6 +186,12 @@ namespace ZVClusterApp.WinForms
                             s.TrackBands = final.ToArray();
                         }
 
+                        // Ensure per-cluster shortcut lists not null
+                        if (s.Clusters != null)
+                        {
+                            foreach (var c in s.Clusters)
+                                c.CommandShortcuts ??= new List<CommandShortcut>();
+                        }
                         return s;
                     }
                 }
@@ -197,7 +214,13 @@ namespace ZVClusterApp.WinForms
                 Port = 7000,
                 AutoLogin = false,
                 DefaultCommands = Array.Empty<string>(),
-                Format = ClusterFormat.DXSpider
+                Format = ClusterFormat.DXSpider,
+                CommandShortcuts = new List<CommandShortcut>
+                {
+                    new() { Name = "Show Filters", Command = "SH/FILTER" },
+                    new() { Name = "Clear Filters", Command = "SET/NOFILTER" },
+                    new() { Name = "Last 30 DX", Command = "SH/DX 30" },
+                }
             });
 
             def.Clusters.Add(new ClusterDefinition
@@ -219,8 +242,18 @@ namespace ZVClusterApp.WinForms
                     "SH/FILTER\t# show current filter settings",
                     "SH/MYDX/30\t# show me the last 30 spots to seed the display"
                 },
-                Format = ClusterFormat.CCCluster
+                Format = ClusterFormat.CCCluster,
+                CommandShortcuts = new List<CommandShortcut>
+                {
+                    new() { Name = "Show Filters", Command = "SH/FILTER" },
+                    new() { Name = "Clear Filters", Command = "SET/NOFILTER" },
+                    new() { Name = "Last 30 DX", Command = "SH/MYDX/30" },
+                    new() { Name = "Ignore K,VE", Command = "SET/FILTER DXCTY/REJECT K,VE" },
+                    new() { Name = "Only K,VE Origin", Command = "SET/FILTER DOC/PASS K,VE" },
+                    new() { Name = "All Spots", Command = "SET/FILTER DXCTY/OFF" }
+                }
             });
+
             Save(def);
             return def;
         }
@@ -233,6 +266,13 @@ namespace ZVClusterApp.WinForms
                 if (s.MyClusters == null) s.MyClusters = new[] { s.MyCall, "", "", "" };
                 else if (s.MyClusters.Length > 4) s.MyClusters = s.MyClusters.Take(4).ToArray();
                 else if (s.MyClusters.Length < 4) s.MyClusters = s.MyClusters.Concat(Enumerable.Repeat("", 4 - s.MyClusters.Length)).ToArray();
+
+                // Ensure per-cluster shortcuts lists exist
+                if (s.Clusters != null)
+                {
+                    foreach (var c in s.Clusters)
+                        c.CommandShortcuts ??= new List<CommandShortcut>();
+                }
 
                 var json = JsonSerializer.Serialize(s, new JsonSerializerOptions { WriteIndented = true });
                 var tmp = FilePath + ".tmp";

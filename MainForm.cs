@@ -69,6 +69,9 @@ namespace ZVClusterApp.WinForms
         private HashSet<string> _preSoloEnabled = new(StringComparer.OrdinalIgnoreCase);
         private string? _soloBandActive = null;
 
+        // Shortcut context menu for console input
+        private ContextMenuStrip? _shortcutMenu;
+
         // === Helpers for Info column sizing ===
         private bool ListViewHasVScroll()
         {
@@ -207,6 +210,8 @@ namespace ZVClusterApp.WinForms
             _txtConsoleInput.TextChanged += TxtConsoleInput_TextChanged;
             _txtConsoleInput.MouseUp += (s, e) => EnsureCursorAfterPrompt();
             _txtConsoleInput.Enter += (s, e) => MoveCaretToEnd();
+            _shortcutMenu = BuildShortcutMenu(_txtConsoleInput);
+            _txtConsoleInput.ContextMenuStrip = _shortcutMenu;
             _btnSend = new Button { Text = "Send", Dock = DockStyle.Right, Width = 80 };
             _btnSend.Click += (s, e) => SendConsoleLine();
             bottomConsolePanel.Controls.Add(_txtConsoleInput);
@@ -580,7 +585,6 @@ namespace ZVClusterApp.WinForms
                     int end = line.IndexOf(']');
                     if (end > 0 && end + 1 < line.Length)
                     {
-                        // Remove trailing space after ] if any
                         int start = end + 1;
                         if (start < line.Length && line[start] == ' ') start++;
                         line = line.Substring(start);
@@ -597,18 +601,13 @@ namespace ZVClusterApp.WinForms
                 }
 
                 // Guard: ignore directed messages addressed to me, like "MYCALL de SPOTTER ..."
-
                 try
                 {
                     var myCall = (_settings.MyCall ?? string.Empty).Trim().ToUpperInvariant();
                     if (!string.IsNullOrWhiteSpace(myCall))
                     {
                         var up = line.ToUpperInvariant();
-                        if (up.StartsWith(myCall + " DE "))
-                        {
-                            // Already shown in console; do not treat as a DX spot
-                            return;
-                        }
+                        if (up.StartsWith(myCall + " DE ")) return;
                     }
                 }
                 catch { }
@@ -646,6 +645,17 @@ namespace ZVClusterApp.WinForms
                     return text;
                 }
 
+                // Safe slice join to avoid negative Take() counts
+                static string SafeJoin(string[] arr, int start, int count)
+                {
+                    if (arr == null || arr.Length == 0) return string.Empty;
+                    if (start < 0) start = 0;
+                    if (count <= 0) return string.Empty;
+                    if (start >= arr.Length) return string.Empty;
+                    int take = Math.Min(count, arr.Length - start);
+                    return string.Join(' ', arr.Skip(start).Take(take));
+                }
+
                 // Try multiple common formats (relaxed callsign pattern)
                 // 1) DX de <spotter>[:]? <freq> <dxcall> ...
                 var m1 = Regex.Match(line,
@@ -657,7 +667,7 @@ namespace ZVClusterApp.WinForms
                     @"(?<fq>\d{3,}(?:[\.,]\d{1,3})?)(?:\s*(?:kHz|Hz|MHZ|MHz))?\s+(?<dx>[A-Z0-9][A-Z0-9/]{1,}).*?DX\s+de\s+(?<sp>[A-Z0-9][A-Z0-9/#-]*)\b(?<rest>.*)",
                     RegexOptions.IgnoreCase) : Match.Empty;
 
-                // 3) DXSpider sh/dx style: <freq> <dxcall> [mode ...] <time>Z <spotter(-#)>
+                // 3) DXSpider sh/dx style: <freq> <dxcall> [mode ...] <time>Z <spotter(-#)
                 var m3 = (!m1.Success && !m2.Success) ? Regex.Match(line,
                     @"^(?<fq>\d{3,}(?:[\.,]\d{1,3})?)\s+(?<dx>[A-Z0-9][A-Z0-9/]{1,})\s+(?<rest>.+)$",
                     RegexOptions.IgnoreCase) : Match.Empty;
@@ -720,7 +730,7 @@ namespace ZVClusterApp.WinForms
                     int idxAfterFreq = line.IndexOf(freqTxt, StringComparison.Ordinal);
                     if (idxAfterFreq >= 0)
                     {
-                        var tail = line[(idxAfterFreq + freqTxt.Length)..].TrimStart();
+                        var tail = line[(idxAfterFreq + freqTxt.Length)..].Trim();
                         tail = ExtractAngleSpotter(tail, ref spotter);
                         var tokens = tail.Split(' ');
                         if (tokens.Length > 0)
@@ -734,7 +744,7 @@ namespace ZVClusterApp.WinForms
                                 if (Regex.IsMatch(last, @"^[A-Z0-9][A-Z0-9/]*-?\d*$", RegexOptions.IgnoreCase) && string.IsNullOrWhiteSpace(spotter))
                                 {
                                     spotter = last;
-                                    info = string.Join(' ', tokens.Skip(1).Take(tokens.Length - 2)).Trim();
+                                    info = string.Join(' ', tokens.Take(Math.Max(0, tokens.Length - 1))).Trim();
                                 }
                                 else info = string.Join(' ', tokens.Skip(1)).Trim();
                             }
@@ -745,7 +755,7 @@ namespace ZVClusterApp.WinForms
 
                 if (string.IsNullOrWhiteSpace(freqTxt) || string.IsNullOrWhiteSpace(dxCall)) return;
 
-                // Clean frequency token of any stray characters and normalize decimal comma
+                // Clean frequency token and normalize decimal comma
                 freqTxt = freqTxt.Replace(',', '.');
                 freqTxt = Regex.Replace(freqTxt, "[^0-9.]", string.Empty);
 
@@ -1335,13 +1345,21 @@ namespace ZVClusterApp.WinForms
             try
             {
                 if (_listView.Items.Count == 0) return;
-                var last = _listView.Items.Count - 1;
-                _listView.EnsureVisible(last);
+                int lastReal = FindLastRealItemIndex();
+                if (lastReal >= 0) _listView.EnsureVisible(lastReal);
             }
             catch { }
         }
 
-        private Task SendRawThroughManager(string cmd)
+        private int FindLastRealItemIndex()
+        {
+            for (int i = _listView.Items.Count - 1; i >= 0; i--)
+                if (!Equals(_listView.Items[i].Tag, "__filler__"))
+                    return i;
+            return _listView.Items.Count - 1;
+        }
+
+        private Task SendRawThroughManager(string cmd)  
         {
             try { return _clusterManager.SendRawAsync(cmd ?? string.Empty); }
             catch { return Task.CompletedTask; }
@@ -1412,6 +1430,7 @@ namespace ZVClusterApp.WinForms
                 _lastConnectedCluster = target;
                 _settings.LastConnectedCluster = target;
                 UpdateClusterIndicator();
+                RebindShortcutMenuForCurrentCluster(); // ensure menu reflects this cluster
                 AppendConsole($"[SYS] Auto-connected to {target}\r\n");
                 try { AppSettings.Save(_settings); } catch { }
             }
@@ -1434,6 +1453,7 @@ namespace ZVClusterApp.WinForms
                 _btnConnect.Text = "Connect";
                 _lblStatus.Text = "Status: Disconnected";
                 UpdateClusterIndicator();
+                RebindShortcutMenuForCurrentCluster(); // update menu (no active cluster)
                 return;
             }
 
@@ -1449,14 +1469,15 @@ namespace ZVClusterApp.WinForms
 
             _lblStatus.Text = "Status: Connecting...";
             using var cts = new CancellationTokenSource(10000);
-            var ok = await _clusterManager.ConnectAsync(target, cts.Token, forceLogin: true).ConfigureAwait(true);
-            if (ok)
+            var ok2 = await _clusterManager.ConnectAsync(target, cts.Token, forceLogin: true).ConfigureAwait(true);
+            if (ok2)
             {
                 _btnConnect.Text = "Disconnect";
                 _lblStatus.Text = $"Connected to {target} as {(_settings.MyCall ?? string.Empty).ToUpperInvariant()}";
                 _lastConnectedCluster = target;
                 _settings.LastConnectedCluster = target;
                 UpdateClusterIndicator();
+                RebindShortcutMenuForCurrentCluster(); // ensure menu reflects this cluster
                 AppendConsole($"[SYS] Connected to {target}\r\n");
                 try { AppSettings.Save(_settings); } catch { }
             }
@@ -1555,6 +1576,7 @@ namespace ZVClusterApp.WinForms
                     try { AppSettings.Save(_settings); } catch { }
                     PopulateClustersCombo();
                     UpdateClusterIndicator();
+                    RebindShortcutMenuForCurrentCluster(); // updated shortcuts/names
                 }
             }
             catch (Exception ex)
@@ -1673,7 +1695,6 @@ namespace ZVClusterApp.WinForms
                         || string.Equals(band, "40m", StringComparison.OrdinalIgnoreCase);
                 mode = lsb ? "LSB" : "USB";
                 reason = $"frequency in SSB subband for {band}, sideband={(lsb ? "LSB" : "USB")}";
-
             }
             else
             {
@@ -1814,6 +1835,144 @@ namespace ZVClusterApp.WinForms
             };
             foreach (var r in ranges) if (hz >= r.lo && hz <= r.hi) return true; return false;
         }
+
+        private ContextMenuStrip BuildShortcutMenu()
+        {
+            return BuildShortcutMenu(_txtConsoleInput);
+        }
+
+        private ContextMenuStrip BuildShortcutMenu(TextBox target)
+        {
+            var menu = new ContextMenuStrip();
+
+            // Use cluster-specific shortcuts only
+            string? clusterName = _clusterManager.ActiveClusterName ?? _settings.LastConnectedCluster;
+            var def = (!string.IsNullOrWhiteSpace(clusterName))
+                ? _settings.Clusters.FirstOrDefault(c => string.Equals(c.Name, clusterName, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            bool any = false;
+            try
+            {
+                var list = def?.CommandShortcuts;
+                if (list != null && list.Count > 0)
+                {
+                    foreach (var sc in list)
+                    {
+                        if (string.IsNullOrWhiteSpace(sc.Name) || string.IsNullOrWhiteSpace(sc.Command)) continue;
+                        any = true;
+                        var mi = new ToolStripMenuItem(sc.Name) { Tag = sc, ToolTipText = $"Cluster: {def!.Name}" };
+                        mi.Click += async (sender, args) =>
+                        {
+                            if (mi.Tag is CommandShortcut cmd)
+                                await SendShortcutAsync(cmd);
+                        };
+                        menu.Items.Add(mi);
+                    }
+                }
+            }
+            catch { }
+
+            if (!any)
+            {
+                var label = string.IsNullOrWhiteSpace(clusterName) ? "(No cluster selected)" : $"(No shortcuts for '{clusterName}')";
+                var miNone = new ToolStripMenuItem(label) { Enabled = false };
+                menu.Items.Add(miNone);
+            }
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            var miRefresh = new ToolStripMenuItem("Refresh Shortcuts", null, (s, e) => RefreshShortcutMenu());
+            var miEditJson = new ToolStripMenuItem("Edit Shortcuts (JSON)", null, (s, e) =>
+            {
+                try
+                {
+                    var path = System.IO.Path.Combine(AppContext.BaseDirectory, "ZVClusterApp.settings.json");
+                    Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+                }
+                catch { }
+            })
+            {
+                ToolTipText = "Open settings file to edit cluster-specific shortcuts"
+            };
+
+            menu.Items.Add(miRefresh);
+            menu.Items.Add(miEditJson);
+
+            return menu;
+        }
+
+        private void RefreshShortcutMenu()
+        {
+            try
+            {
+                var reloaded = AppSettings.Load();
+                // Replace clusters with latest definitions (no global shortcuts retained)
+                _settings.Clusters = reloaded.Clusters;
+                _shortcutMenu = BuildShortcutMenu(_txtConsoleInput);
+                _txtConsoleInput.ContextMenuStrip = _shortcutMenu;
+            }
+            catch { }
+        }
+
+        private async Task SendShortcutAsync(CommandShortcut sc)
+        {
+            try
+            {
+                var expanded = ExpandShortcutText(sc.Command);
+                var lines = expanded
+                    .Replace("\r\n", "\n")
+                    .Replace("\r", "\n")
+                    .Split('\n')
+                    .Select(l => l.Trim())
+                    .Where(l => l.Length > 0)
+                    .ToArray();
+
+                foreach (var line in lines)
+                {
+                    AppendConsole($"> {line}\r\n");
+                    await SendRawThroughManager(line).ConfigureAwait(true);
+                }
+            }
+            catch { }
+        }
+
+        private string ExpandShortcutText(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+            try
+            {
+                var nowUtc = DateTime.UtcNow;
+                var local = nowUtc + TimeSpan.FromHours(_settings.GmtOffsetHours);
+                string repl(string token) => token switch
+                {
+                    "MYCALL" => (_settings.MyCall ?? string.Empty).ToUpperInvariant(),
+                    "CALL" => (_settings.MyCall ?? string.Empty).ToUpperInvariant(),
+                    "GRID" => (_settings.GridSquare ?? string.Empty).ToUpperInvariant(),
+                    "UTC" => nowUtc.ToString("HHmm", CultureInfo.InvariantCulture),
+                    "LOCAL" => local.ToString("HHmm", CultureInfo.InvariantCulture),
+                    "DATEUTC" => nowUtc.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+                    "DATELocal" => local.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+                    _ => "{" + token + "}"
+                };
+
+                var result = Regex.Replace(raw, @"\{([A-Za-z0-9_]+)\}", m => repl(m.Groups[1].Value));
+                return result;
+            }
+            catch { return raw; }
+        }
+
+        // Rebuild the console input context menu for the currently active/last cluster
+        private void RebindShortcutMenuForCurrentCluster()
+        {
+            try
+            {
+                _shortcutMenu = BuildShortcutMenu(_txtConsoleInput);
+                _txtConsoleInput.ContextMenuStrip = _shortcutMenu;
+            }
+            catch { }
+        }
+
     }
 
     internal sealed class BandColorRenderer : ToolStripProfessionalRenderer
