@@ -1434,7 +1434,17 @@ namespace ZVClusterApp.WinForms
                 var idx = spotter ? 6 : 0; // 6 = Spotter, 0 = DX Call
                 var call = (it.SubItems.Count > idx ? it.SubItems[idx].Text : string.Empty) ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(call)) return;
-                Process.Start(new ProcessStartInfo { FileName = $"https://www.qrz.com/db/{Uri.EscapeDataString(call)}", UseShellExecute = true });
+
+                // Escape each path segment separately so slashes remain as separators
+                var escapedPath = string.Join("/",
+                    call.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(seg => Uri.EscapeDataString(seg)));
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = $"https://www.qrz.com/db/{escapedPath}",
+                    UseShellExecute = true
+                });
             }
             catch { }
         }
@@ -1447,7 +1457,16 @@ namespace ZVClusterApp.WinForms
                 var it = _listView.SelectedItems[0];
                 var call = it.SubItems[0].Text;
                 if (string.IsNullOrWhiteSpace(call)) return;
-                Process.Start(new ProcessStartInfo { FileName = $"https://dxnews.com/{Uri.EscapeDataString(call)}/", UseShellExecute = true });
+
+                var escapedPath = string.Join("/",
+                    call.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(seg => Uri.EscapeDataString(seg)));
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = $"https://dxnews.com/{escapedPath}/",
+                    UseShellExecute = true
+                });
             }
             catch { }
         }
@@ -1462,6 +1481,8 @@ namespace ZVClusterApp.WinForms
                 if (string.IsNullOrWhiteSpace(call)) return;
                 int hz = ParseFrequencyToHz(it.SubItems.Count > 1 ? (it.SubItems[1].Text ?? string.Empty) : string.Empty);
                 if (hz > 0 && IsInSsbSubband(hz)) return; // skip voice subband
+
+                // Query parameter: full value-encoding is correct here
                 var url = $"https://www.reversebeacon.net/dxsd1/dxsd1.php?f=0&c={Uri.EscapeDataString(call)}&t=dx";
                 Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
             }
