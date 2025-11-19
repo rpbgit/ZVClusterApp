@@ -68,10 +68,10 @@ namespace ZVClusterApp.WinForms
         }
 
         // Back-compat ctor
-        public FavoritesEditForm(IEnumerable<string> existing)
-            : this(existing, SystemFonts.MessageBoxFont)
-        {
-        }
+        //public FavoritesEditForm(IEnumerable<string> existing)
+        //    : this(existing, SystemFonts.MessageBoxFont)
+        //{
+        //}
 
         private static List<string> ParsePatterns(string raw)
         {

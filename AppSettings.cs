@@ -371,7 +371,7 @@ namespace ZVClusterApp.WinForms
             catch
             {
                 // Very defensive fallback if the face is missing
-                return SystemFonts.MessageBoxFont;
+                return SystemFonts.MessageBoxFont ?? SystemFonts.DefaultFont;
             }
         }
 
