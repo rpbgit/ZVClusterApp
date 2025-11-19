@@ -32,7 +32,8 @@ namespace ZVClusterApp.WinForms
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 Dock = DockStyle.Fill,
-                Font = editorFont ?? SystemFonts.MessageBoxFont,
+                // CLONE the incoming font so disposing this dialog won't dispose the ListView's font.
+                Font = editorFont != null ? new Font(editorFont, editorFont.Style) : SystemFonts.MessageBoxFont,
                 AcceptsReturn = true,
                 AcceptsTab = false,
                 CharacterCasing = CharacterCasing.Upper // enforce uppercase input

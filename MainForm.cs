@@ -26,6 +26,8 @@ namespace ZVClusterApp.WinForms
         private ComboBox _cmbClusters = null!; // kept (hidden) for backward logic
         private Button _btnConnect = null!;
         private Label _lblStatus = null!;
+        // NEW FIELD: cached DX list font instance
+        private Font? _dxListFont;
 
         // New: moved time/sun labels into MenuStrip
         private ToolStripLabel _menuUtc = null!;
@@ -109,7 +111,7 @@ namespace ZVClusterApp.WinForms
             _clusterManager.LineReceived += Cluster_LineReceived;
             _pumpTask = Task.Run(() => ConsolePumpAsync(_cts.Token));
             _clockTimer = new System.Windows.Forms.Timer { Interval = 1000, Enabled = true }; _clockTimer.Tick += (s, e) => UpdateStatusBar(); UpdateStatusBar();
-            _layoutRefreshTimer = new System.Windows.Forms.Timer { Interval = 100, Enabled = false }; _layoutRefreshTimer.Tick += (s, e) => { _layoutRefreshTimer!.Stop(); RepaintSpotsAfterLayout(); SaveUiSettings(); };
+            _layoutRefreshTimer = new System.Windows.Forms.Timer { Interval = 100, Enabled = false }; _layoutRefreshTimer.Tick += (s, e) => { _layoutRefreshTimer!.Stop(); RepaintSpotsAfterLayout(); ReassertListFont(); SaveUiSettings(); };
             if (_settings.Ui?.SplitterDistance > 0) { try { _split.SplitterDistance = _settings.Ui.SplitterDistance; } catch { } }
             RestoreBandFiltersFromSettings(); RestoreModeFiltersFromSettings();
 
@@ -254,8 +256,11 @@ namespace ZVClusterApp.WinForms
                     new ColumnHeader { Text = "Info", Width = 200 }       // 7
                 }
             };
-            // Apply persisted font for DX list
-            try { _listView.Font = _settings.GetDxListFontOrDefault(_listView.Font); } catch { }
+            // Apply persisted font for DX list (cached + guarded)
+            InitializeDxListFont();
+            // Re-assert font when handle recreates (e.g., after layout/theme changes)
+            _listView.HandleCreated += (s, e) => { try { ApplyListFontFromSettings(); } catch { } };
+
             _listView.Resize += (s, e) => { UpdateInfoColumnWidth(); ScrollSpotsToBottom(); };
             _listView.Scrollable = true;
 
@@ -520,8 +525,12 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                // Use the same font as the DX list
-                using var dlg = new FavoritesEditForm(_favoritePatterns, _listView.Font);
+                // Use the same font as the DX list but pass a CLONE so the dialog owns its own instance.
+                var edFont = (_listView.Font != null)
+                    ? new Font(_listView.Font, _listView.Font.Style)
+                    : AppSettings.CreateDefaultDxListFont();
+
+                using var dlg = new FavoritesEditForm(_favoritePatterns, edFont);
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
                     _favoritePatterns.Clear();
@@ -838,14 +847,14 @@ namespace ZVClusterApp.WinForms
                 it.SubItems.Add(spotter);                               // 6 Spotter
                 it.SubItems.Add(info);                                  // 7 Info
                 it.Tag = band;
-
+                // Ensure item has no individual Font so it inherits ListView.Font
+                it.UseItemStyleForSubItems = true;
                 // Apply per-band colors immediately so new rows are colored without waiting for a filter refresh
                 if (!string.IsNullOrWhiteSpace(band))
                 {
                     var baseColor = _settings.ColorForBand(band);
                     var brightness = baseColor.GetBrightness();
                     var fore = brightness < 0.5f ? Color.White : Color.Black;
-                    it.UseItemStyleForSubItems = true;
                     it.BackColor = baseColor;
                     it.ForeColor = fore;
                     foreach (ListViewItem.ListViewSubItem si in it.SubItems)
@@ -1057,16 +1066,24 @@ namespace ZVClusterApp.WinForms
                 var filtered = _allRows.Where(it => ItemBandIsEnabled(it) && ItemModeIsEnabled(it) && FavoritesCondition(it)).TakeLast(1000);
                 foreach (var src in filtered)
                 {
-                    var clone = (ListViewItem)src.Clone();
+                    // Rebuild item without cloning per-item Font/handle state to avoid font resets
+                    var clone = new ListViewItem(src.Text ?? string.Empty);
+                    for (int i = 1; i < src.SubItems.Count; i++)
+                    {
+                        var txt = src.SubItems[i].Text ?? string.Empty;
+                        clone.SubItems.Add(txt);
+                    }
                     // src subitem indices already follow new layout: 0 DX,1 Freq,2 Time,3 Country,4 Dist,5 Bearing,6 Spotter,7 Info
                     var band = GetItemBand(src);
                     clone.Tag = band;
+                    // Ensure item has no individual Font so it inherits ListView.Font
+                    clone.UseItemStyleForSubItems = true;
+                    // Apply per-band colors immediately so new rows are colored without waiting for a filter refresh
                     if (!string.IsNullOrWhiteSpace(band))
                     {
                         var baseColor = _settings.ColorForBand(band);
                         var brightness = baseColor.GetBrightness();
                         var fore = brightness < 0.5f ? Color.White : Color.Black;
-                        clone.UseItemStyleForSubItems = true;
                         clone.BackColor = baseColor;
                         clone.ForeColor = fore;
                         foreach (ListViewItem.ListViewSubItem si in clone.SubItems)
@@ -1080,6 +1097,12 @@ namespace ZVClusterApp.WinForms
                 FillListToBottom();
                 UpdateInfoColumnWidth(); // immediate sizing
                 _listView.EndUpdate();
+
+                UiUtil.Resume(_listView);
+
+                // Re-assert the configured DX list font after layout has resumed to avoid transient fallback
+                try { ApplyListFontFromSettings(); } catch { }
+
                 UiUtil.Resume(_listView);
                 DeferUpdateInfoWidth(); // deferred sizing (handles scrollbar appearance changes)
             }
@@ -1168,18 +1191,71 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                if (_listView == null || _listView.IsDisposed) return;
-                var cur = _listView.Font;
-                var chosen = _settings.GetDxListFontOrDefault(cur);
-                // Assign if different by value (name/size/style) to avoid churn
-                if (cur.FontFamily.Name != chosen.FontFamily.Name || Math.Abs(cur.SizeInPoints - chosen.SizeInPoints) > 0.01 || cur.Style != chosen.Style)
+                var chosen = _settings.GetDxListFontOrDefault(SystemFonts.MessageBoxFont);
+                if (_dxListFont == null ||
+                    _dxListFont.FontFamily.Name != chosen.FontFamily.Name ||
+                    Math.Abs(_dxListFont.SizeInPoints - chosen.SizeInPoints) > 0.01 ||
+                    _dxListFont.Style != chosen.Style)
                 {
-                    _listView.Font = chosen;
+                    _dxListFont?.Dispose();
+                    _dxListFont = chosen; // keep cached settings font
+
+                    // Assign a non-shared clone to the ListView
+                    _listView.Font = new Font(_dxListFont, _dxListFont.Style);
                 }
             }
             catch { }
-            // Recompute layout as row height changes with font
             QueueRepaintSpots();
+        }
+
+        private void InitializeDxListFont()
+        {
+            try
+            {
+                // Build the configured font and keep a cached copy
+                _dxListFont?.Dispose();
+                _dxListFont = _settings.GetDxListFontOrDefault(SystemFonts.MessageBoxFont);
+
+                // Assign a non-shared clone to the ListView to avoid shared-dispose issues
+                _listView.Font = new Font(_dxListFont, _dxListFont.Style);
+
+                // Guard: if something changes the ListView font, re-assert ours
+                _listView.FontChanged += (s, e) => ReassertListFont();
+            }
+            catch { }
+            QueueRepaintSpots();
+        }
+
+        private void ReassertListFont()
+        {
+            try
+            {
+                if (_dxListFont == null)
+                    _dxListFont = _settings.GetDxListFontOrDefault(SystemFonts.MessageBoxFont);
+
+                var cur = _listView.Font;
+                var refF = _dxListFont;
+
+                // If different by value, set a fresh clone
+                if (cur.FontFamily.Name != refF.FontFamily.Name ||
+                    Math.Abs(cur.SizeInPoints - refF.SizeInPoints) > 0.01 ||
+                    cur.Style != refF.Style)
+                {
+                    _listView.Font = new Font(refF, refF.Style);
+                    QueueRepaintSpots();
+                }
+            }
+            catch
+            {
+                // If our cached font was invalid/disposed, rebuild and re-apply
+                try
+                {
+                    _dxListFont = _settings.GetDxListFontOrDefault(SystemFonts.MessageBoxFont);
+                    _listView.Font = new Font(_dxListFont, _dxListFont.Style);
+                    QueueRepaintSpots();
+                }
+                catch { }
+            }
         }
 
         // === Added back missing helper methods removed during refactor ===
@@ -1400,6 +1476,7 @@ namespace ZVClusterApp.WinForms
             try { _clusterManager.Disconnect(); } catch { }
             try { SaveUiSettings(); } catch { }
             try { _clusterManager.LineReceived -= Cluster_LineReceived; } catch { }
+            try { _dxListFont?.Dispose(); } catch { } // dispose cached font
         }
 
         // === Missing implementations restored ===
@@ -1720,6 +1797,7 @@ namespace ZVClusterApp.WinForms
             catch { }
         }
 
+        // FIX: restore original signature (string line) instead of int
         private void Cluster_LineReceived(string clusterName, string line)
         {
             _rxLines.Enqueue($"[{clusterName}] {line}");
@@ -1799,7 +1877,7 @@ namespace ZVClusterApp.WinForms
                         || string.Equals(band, "80m", StringComparison.OrdinalIgnoreCase)
                         || string.Equals(band, "40m", StringComparison.OrdinalIgnoreCase);
                 mode = lsb ? "LSB" : "USB";
-                reason = $"frequency in SSB subband for {band}, sideband={(lsb ? "LSB" : "USB")}";
+                reason = $"frequency in SSB subband for {band}, sideband={(lsb ? "LSB" : "USB")}"; 
             }
             else
             {
