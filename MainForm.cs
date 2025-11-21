@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D; // Added for SmoothingMode
+using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -11,7 +11,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
-using System.Reflection; // Added for version info
+using System.Reflection;
+using System.IO;
+using System.Text;
 
 namespace ZVClusterApp.WinForms
 {
@@ -23,11 +25,14 @@ namespace ZVClusterApp.WinForms
         private readonly ConcurrentQueue<string> _rxLines = new();
         private CancellationTokenSource _cts = new();
         private Task? _pumpTask;
-        private ComboBox _cmbClusters = null!; // kept (hidden) for backward logic
+        private ComboBox _cmbClusters = null!;
         private Button _btnConnect = null!;
         private Label _lblStatus = null!;
-        // NEW FIELD: cached DX list font instance
         private Font? _dxListFont;
+
+        // Runtime file logging handles
+        private TextWriterTraceListener? _fileTraceListener;
+        private StreamWriter? _fileLogWriter;
 
         // New: moved time/sun labels into MenuStrip
         private ToolStripLabel _menuUtc = null!;
@@ -98,6 +103,60 @@ namespace ZVClusterApp.WinForms
         private void DeferUpdateInfoWidth() { try { if (IsHandleCreated) BeginInvoke((Action)UpdateInfoColumnWidth); } catch { } }
         // =====================================
 
+        // ADD: timestamping trace listener (scoped to MainForm)
+        private sealed class TimestampTraceListener : TextWriterTraceListener
+        {
+            public TimestampTraceListener(TextWriter writer, string name) : base(writer, name) { }
+            private static string Stamp() => DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            public override void Write(string? message) => base.Write($"{Stamp()} {message}");
+            public override void WriteLine(string? message) => base.WriteLine($"{Stamp()} {message}");
+        }
+
+        // ADD: dynamically add/remove file logging without restart (simplified: Trace only; Debug.Listeners not available)
+        private void EnsureFileLogging(bool enable)
+        {
+            try
+            {
+                // Find existing listener by name
+                TraceListener? existing = null;
+                foreach (TraceListener l in Trace.Listeners)
+                {
+                    if (string.Equals(l.Name, "DebugLog", StringComparison.OrdinalIgnoreCase)) { existing = l; break; }
+                }
+
+                if (enable)
+                {
+                    if (existing != null) return; // already active
+                    if (_fileTraceListener == null)
+                    {
+                        var logPath = Path.Combine(AppContext.BaseDirectory, "debug.log");
+                        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                        _fileLogWriter = new StreamWriter(logPath, append: true, new UTF8Encoding(false)) { AutoFlush = true };
+                        _fileTraceListener = new TimestampTraceListener(_fileLogWriter, "DebugLog");
+                        try { Trace.Listeners.Add(_fileTraceListener); } catch { }
+                        try { Trace.WriteLine("==== Debug logging ENABLED (runtime) ===="); } catch { }
+                    }
+                }
+                else
+                {
+                    if (existing != null)
+                    {
+                        try { Trace.Listeners.Remove(existing); } catch { }
+                        try { existing.Flush(); existing.Close(); } catch { }
+                    }
+                    if (_fileTraceListener != null)
+                    {
+                        try { Trace.Listeners.Remove(_fileTraceListener); } catch { }
+                        try { _fileTraceListener.Flush(); _fileTraceListener.Close(); } catch { }
+                        _fileTraceListener = null;
+                    }
+                    try { _fileLogWriter?.Dispose(); } catch { }
+                    _fileLogWriter = null;
+                }
+            }
+            catch { }
+        }
+
         public MainForm(ClusterManager clusterManager, RadioController radio, AppSettings settings)
         {
             _clusterManager = clusterManager; _radio = radio; _settings = settings;
@@ -143,6 +202,33 @@ namespace ZVClusterApp.WinForms
             // File -> Exit
             var miExit = new ToolStripMenuItem("Exit", null, MiExit_Click) { ShortcutKeys = Keys.Alt | Keys.F4 };
             miFile.DropDownItems.Add(miExit);
+
+            // Debug Log (checkable)
+            var miDebugLog = new ToolStripMenuItem("Debug Log")
+            {
+                CheckOnClick = true,
+                Checked = _settings.DebugLogEnabled,
+                ToolTipText = "Toggle runtime debug logging (gates Debug/Trace writes to debug.log)."
+            };
+            miDebugLog.CheckedChanged += (s, e) =>
+            {
+                try
+                {
+                    _settings.DebugLogEnabled = miDebugLog.Checked;
+                    AppSettings.Save(_settings);
+
+                    EnsureFileLogging(miDebugLog.Checked); // ADD: actually add/remove the file listener now
+
+                    AppendConsole($"[SYS] Debug logging {(miDebugLog.Checked ? "ENABLED" : "DISABLED")}.\r\n");
+                    if (miDebugLog.Checked)
+                    {
+                        try { Debug.WriteLine("[DebugLog] Enabled at " + DateTime.UtcNow.ToString("u", CultureInfo.InvariantCulture)); } catch { }
+                    }
+                }
+                catch { }
+            };
+            miFile.DropDownItems.Add(new ToolStripSeparator());
+            miFile.DropDownItems.Add(miDebugLog);
 
             // Add Settings under View menu
             var miSettings = new ToolStripMenuItem("Settings...", null, BtnSettings_Click);
@@ -340,6 +426,9 @@ namespace ZVClusterApp.WinForms
             MoveCaretToEnd();
             UpdateClusterIndicator();
             UpdateFavoritesButtonVisual();
+
+            // ADD: align listeners with current setting on startup (ensures Debug.WriteLine goes to file only when enabled)
+            EnsureFileLogging(_settings.DebugLogEnabled);
         }
 
         // Menu item handlers (implemented)
@@ -685,6 +774,7 @@ namespace ZVClusterApp.WinForms
                 }
 
                 // Guard: ignore directed messages addressed to me, like "MYCALL de SPOTTER ..."
+
                 try
                 {
                     var myCall = (_settings.MyCall ?? string.Empty).Trim().ToUpperInvariant();
@@ -1497,7 +1587,18 @@ namespace ZVClusterApp.WinForms
             try { _clusterManager.Disconnect(); } catch { }
             try { SaveUiSettings(); } catch { }
             try { _clusterManager.LineReceived -= Cluster_LineReceived; } catch { }
-            try { _dxListFont?.Dispose(); } catch { } // dispose cached font
+            try { _dxListFont?.Dispose(); } catch { }
+            // Clean up file logging (Trace only)
+            try
+            {
+                if (_fileTraceListener != null)
+                {
+                    try { Trace.Listeners.Remove(_fileTraceListener); } catch { }
+                    try { _fileTraceListener.Flush(); _fileTraceListener.Close(); } catch { }
+                }
+            }
+            catch { }
+            try { _fileLogWriter?.Dispose(); } catch { }
         }
 
         // === Missing implementations restored ===
