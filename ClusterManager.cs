@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics; // ADDED
 
 namespace ZVClusterApp.WinForms
 {
@@ -36,6 +37,9 @@ namespace ZVClusterApp.WinForms
         // Proactive reconnection management ------------------------------------------------------
         // One reconnect worker per cluster name at most. We store the task and a CTS to cancel it when no longer needed.
         private readonly Dictionary<string, (Task task, CancellationTokenSource cts)> _reconnectWorkers = new(StringComparer.OrdinalIgnoreCase);
+
+        // NEW: prevent overlapping login replays per cluster
+        private readonly HashSet<string> _loginReplayInProgress = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Create the manager and initialize clients based on settings.</summary>
         public ClusterManager(AppSettings settings)
@@ -189,32 +193,44 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        /// <summary>
-        /// Performs re-login / command replay after a successful reconnect (only if cluster remains active).
-        /// </summary>
-        private async void OnClientReconnected(string name)
+        // HELPER: unified login + default command replay
+        private async Task ReplayLoginAndDefaultsAsync(string name, ClusterClient client, ClusterDefinition def, CancellationToken token, bool forceLogin)
         {
+            // Only run if cluster is still active and not already replaying
+            if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
+            lock (_activityLock)
+            {
+                if (_loginReplayInProgress.Contains(name)) return;
+                _loginReplayInProgress.Add(name);
+            }
+
             try
             {
-                // Only act if this cluster is still the active one.
-                if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
-                var def = GetDefinition(name);
-                var client = _activeClient;
-                if (def == null || client == null) return;
-
-                // Allow cluster to present its prompt.
-                await Task.Delay(1000).ConfigureAwait(false);
-
-                var myCall = _settings.MyCall?.Trim();
-                if (!string.IsNullOrEmpty(myCall))
+                // Wait for initial prompt or line activity (up to 3s) to reduce chance of losing first command
+                var waitDeadline = DateTime.UtcNow.AddSeconds(3);
+                while (DateTime.UtcNow < waitDeadline)
                 {
-                    LineReceived?.Invoke(name, "[CMD] " + myCall);
-                    try { await client.SendRawLineAsync(myCall).ConfigureAwait(false); } catch { }
-                    await Task.Delay(150).ConfigureAwait(false);
+                    bool hadActivity;
+                    lock (_activityLock)
+                        hadActivity = _lastActivityUtc.TryGetValue(name, out var last) && (DateTime.UtcNow - last) < TimeSpan.FromSeconds(2);
+                    if (hadActivity) break;
+                    await Task.Delay(200, token).ConfigureAwait(false);
                 }
 
-                // Replay default commands (strip inline comments).
-                if (def.DefaultCommands != null && def.DefaultCommands.Length > 0)
+                var myCall = _settings.MyCall?.Trim();
+                bool doLogin = (def.AutoLogin || forceLogin) && !string.IsNullOrEmpty(myCall);
+
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[ClusterManager] Replay start cluster={name} doLogin={doLogin} defaults={(def.DefaultCommands?.Length ?? 0)}");
+
+                if (doLogin)
+                {
+                    LineReceived?.Invoke(name, "[CMD] " + myCall);
+                    try { await client.SendRawLineAsync(myCall!).ConfigureAwait(false); } catch { }
+                    await Task.Delay(150, token).ConfigureAwait(false);
+                }
+
+                if (def.DefaultCommands != null && def.DefaultCommands.Length > 0 && (def.AutoLogin || forceLogin))
                 {
                     foreach (var raw in def.DefaultCommands)
                     {
@@ -223,14 +239,50 @@ namespace ZVClusterApp.WinForms
                         var core = hashIdx >= 0 ? raw.Substring(0, hashIdx) : raw;
                         core = core.Trim();
                         if (core.Length == 0) continue;
+
                         LineReceived?.Invoke(name, "[CMD] " + core);
                         try { await client.SendRawLineAsync(core).ConfigureAwait(false); } catch { }
-                        await Task.Delay(180).ConfigureAwait(false);
+                        await Task.Delay(180, token).ConfigureAwait(false);
                     }
                 }
 
-                // Final blank line to settle UI prompt.
+                // Final blank line
                 try { await client.SendRawLineAsync(string.Empty).ConfigureAwait(false); } catch { }
+
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[ClusterManager] Replay complete cluster={name}");
+            }
+            catch (OperationCanceledException)
+            {
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[ClusterManager] Replay canceled cluster={name}");
+            }
+            catch (Exception ex)
+            {
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[ClusterManager] Replay error cluster={name}: {ex.Message}");
+            }
+            finally
+            {
+                lock (_activityLock) _loginReplayInProgress.Remove(name);
+            }
+        }
+
+        /// <summary>
+        /// Performs re-login / command replay after a successful reconnect (only if cluster remains active).
+        /// </summary>
+        private async void OnClientReconnected(string name)
+        {
+            try
+            {
+                if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
+                var def = GetDefinition(name);
+                var client = _activeClient;
+                if (def == null || client == null) return;
+
+                // Use cancellation token that times out if stuck
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await ReplayLoginAndDefaultsAsync(name, client, def, timeoutCts.Token, forceLogin: true).ConfigureAwait(false);
             }
             catch { }
         }
@@ -255,41 +307,12 @@ namespace ZVClusterApp.WinForms
                 ActiveClusterName = name;
                 _activeClient = client;
                 UpdateLastActivity(name);
-                UnsuppressKeepAlive(name); // ensure keepalive is re-enabled for this cluster
-                StopReconnectWorker(name);  // no need to keep reconnecting
+                UnsuppressKeepAlive(name);
+                StopReconnectWorker(name);
 
                 if (def != null)
                 {
-                    var myCall = _settings.MyCall?.Trim();
-
-                    if (def.AutoLogin || forceLogin)
-                    {
-                        if (!string.IsNullOrEmpty(myCall))
-                        {
-                            LineReceived?.Invoke(name, "[CMD] " + myCall);
-                            await client.SendRawLineAsync(myCall).ConfigureAwait(false);
-                            await Task.Delay(150, token).ConfigureAwait(false);
-                        }
-
-                        if (def.DefaultCommands != null && def.DefaultCommands.Length > 0)
-                        {
-                            foreach (var raw in def.DefaultCommands)
-                            {
-                                if (string.IsNullOrWhiteSpace(raw)) continue;
-
-                                var hashIdx = raw.IndexOf('#');
-                                var core = hashIdx >= 0 ? raw.Substring(0, hashIdx) : raw;
-                                core = core.Trim();
-                                if (core.Length == 0) continue;
-
-                                LineReceived?.Invoke(name, "[CMD] " + core);
-                                await client.SendRawLineAsync(core).ConfigureAwait(false);
-                                await Task.Delay(180, token).ConfigureAwait(false);
-                            }
-                        }
-
-                        await client.SendRawLineAsync(string.Empty).ConfigureAwait(false); // settle prompt
-                    }
+                    await ReplayLoginAndDefaultsAsync(name, client, def, token, forceLogin).ConfigureAwait(false);
                 }
             }
             return ok;
