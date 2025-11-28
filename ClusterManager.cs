@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics; // ADDED
+using System.Text.RegularExpressions; // ADDED for prompt detection
 
 namespace ZVClusterApp.WinForms
 {
@@ -193,11 +194,41 @@ namespace ZVClusterApp.WinForms
             }
         }
 
+        // ADD: Wait specifically for common login prompts with timeout (non-blocking)
+        private async Task WaitForLoginPromptAsync(string name, TimeSpan timeout, CancellationToken token)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Local handler subscribes to bubbled lines (LineReceived is raised via client.LineReceived hook)
+            void OnAnyLine(string cluster, string line)
+            {
+                if (!string.Equals(cluster, name, StringComparison.OrdinalIgnoreCase)) return;
+                try
+                {
+                    if (line == null) return;
+                    if (Regex.IsMatch(line, @"\b(login|call|username)\s*:", RegexOptions.IgnoreCase))
+                        tcs.TrySetResult(true);
+                }
+                catch { }
+            }
+
+            LineReceived += OnAnyLine;
+            try
+            {
+                var delayTask = Task.Delay(timeout, token);
+                var winner = await Task.WhenAny(tcs.Task, delayTask).ConfigureAwait(false);
+                // ignore result; we just timeout/fallback if no prompt
+            }
+            catch { }
+            finally
+            {
+                try { LineReceived -= OnAnyLine; } catch { }
+            }
+        }
+
         // HELPER: unified login + default command replay
         private async Task ReplayLoginAndDefaultsAsync(string name, ClusterClient client, ClusterDefinition def, CancellationToken token, bool forceLogin)
         {
-            // Only run if cluster is still active and not already replaying
-            if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
+            // Prevent overlapping replays per cluster
             lock (_activityLock)
             {
                 if (_loginReplayInProgress.Contains(name)) return;
@@ -206,7 +237,7 @@ namespace ZVClusterApp.WinForms
 
             try
             {
-                // Wait for initial prompt or line activity (up to 3s) to reduce chance of losing first command
+                // Wait for initial prompt or some activity (up to 3s)
                 var waitDeadline = DateTime.UtcNow.AddSeconds(3);
                 while (DateTime.UtcNow < waitDeadline)
                 {
@@ -225,6 +256,9 @@ namespace ZVClusterApp.WinForms
 
                 if (doLogin)
                 {
+                    // Prefer waiting for explicit prompt if it appears, fallback to immediate send after timeout
+                    try { await WaitForLoginPromptAsync(name, TimeSpan.FromSeconds(3), token).ConfigureAwait(false); } catch { }
+
                     LineReceived?.Invoke(name, "[CMD] " + myCall);
                     try { await client.SendRawLineAsync(myCall!).ConfigureAwait(false); } catch { }
                     await Task.Delay(150, token).ConfigureAwait(false);
@@ -246,7 +280,6 @@ namespace ZVClusterApp.WinForms
                     }
                 }
 
-                // Final blank line
                 try { await client.SendRawLineAsync(string.Empty).ConfigureAwait(false); } catch { }
 
                 if (_settings.DebugLogEnabled)
@@ -275,14 +308,18 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
-                var def = GetDefinition(name);
-                var client = _activeClient;
-                if (def == null || client == null) return;
+                // Ensure the reconnecting cluster becomes active before replay
+                if (_clients.TryGetValue(name, out var client) && client != null)
+                {
+                    ActiveClusterName = name;
+                    _activeClient = client;
+                }
 
-                // Use cancellation token that times out if stuck
+                var def = GetDefinition(name);
+                if (def == null || _activeClient == null) return;
+
                 using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await ReplayLoginAndDefaultsAsync(name, client, def, timeoutCts.Token, forceLogin: true).ConfigureAwait(false);
+                await ReplayLoginAndDefaultsAsync(name, _activeClient, def, timeoutCts.Token, forceLogin: true).ConfigureAwait(false);
             }
             catch { }
         }
