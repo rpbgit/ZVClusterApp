@@ -59,6 +59,35 @@ namespace ZVClusterApp.WinForms
                 {
                     UpdateLastActivity(c.Name);
                     LineReceived?.Invoke(c.Name, line);
+
+                    // Fallback: if we are connected, active on this cluster, and see a login prompt,
+                    // trigger the replay even if Reconnected wasn't raised.
+                    try
+                    {
+                        var activeName = ActiveClusterName;
+                        var isActive = string.Equals(activeName, c.Name, StringComparison.OrdinalIgnoreCase);
+                        var connected = client.IsConnected;
+                        var def = GetDefinition(c.Name);
+
+                        if (isActive && connected && def != null && line != null &&
+                            Regex.IsMatch(line, @"\b(login|call|username)\s*:", RegexOptions.IgnoreCase))
+                        {
+                            bool alreadyReplaying;
+                            lock (_activityLock)
+                                alreadyReplaying = _loginReplayInProgress.Contains(c.Name);
+
+                            if (!alreadyReplaying)
+                            {
+                                // Fire-and-forget with a short timeout to avoid hanging
+                                _ = Task.Run(async () =>
+                                {
+                                    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                                    await ReplayLoginAndDefaultsAsync(c.Name, client, def, timeoutCts.Token, forceLogin: true).ConfigureAwait(false);
+                                });
+                            }
+                        }
+                    }
+                    catch { /* non-fatal */ }
                 };
 
                 // On reconnect: clear keepalive suppression and perform auto-login sequence if active.
@@ -301,13 +330,18 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        /// <summary>
-        /// Performs re-login / command replay after a successful reconnect (only if cluster remains active).
-        /// </summary>
+        // Add debug log helpers (optional if you already use DebugLogEnabled)
+        private void Log(string msg)
+        {
+            if (_settings.DebugLogEnabled)
+                Debug.WriteLine("[ClusterManager] " + msg);
+        }
+
         private async void OnClientReconnected(string name)
         {
             try
             {
+                Log($"OnClientReconnected start cluster={name}");
                 // Ensure the reconnecting cluster becomes active before replay
                 if (_clients.TryGetValue(name, out var client) && client != null)
                 {
@@ -316,12 +350,20 @@ namespace ZVClusterApp.WinForms
                 }
 
                 var def = GetDefinition(name);
-                if (def == null || _activeClient == null) return;
+                if (def == null || _activeClient == null)
+                {
+                    Log($"OnClientReconnected abort cluster={name} defNull={def == null} activeNull={_activeClient == null}");
+                    return;
+                }
 
                 using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 await ReplayLoginAndDefaultsAsync(name, _activeClient, def, timeoutCts.Token, forceLogin: true).ConfigureAwait(false);
+                Log($"OnClientReconnected end cluster={name}");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log($"OnClientReconnected error cluster={name}: {ex.Message}");
+            }
         }
 
         /// <summary>Enumerates cluster names known to the manager.</summary>

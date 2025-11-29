@@ -443,20 +443,31 @@ namespace ZVClusterApp.WinForms {
         private void PopulateCatControls() {
             try {
                 // Ports
-                var ports = SerialPort.GetPortNames().OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray();
+                var ports = SerialPort.GetPortNames()
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
                 _cmbCatPort.BeginUpdate();
                 _cmbCatPort.Items.Clear();
-                foreach (var p in ports) _cmbCatPort.Items.Add(p);
-                _cmbCatPort.EndUpdate();
-                if (!string.IsNullOrWhiteSpace(_working.CatPort)) {
-                    int idx = _cmbCatPort.FindStringExact(_working.CatPort);
-                    _cmbCatPort.SelectedIndex = idx >= 0 ? idx : (_cmbCatPort.Items.Count > 0 ? 0 : -1);
+
+                if (ports.Length == 0) {
+                    // Explicit placeholder when no ports found
+                    _cmbCatPort.Items.Add("N/A");
+                    _cmbCatPort.SelectedIndex = 0;
                 } else {
-                    _cmbCatPort.SelectedIndex = _cmbCatPort.Items.Count > 0 ? 0 : -1;
+                    foreach (var p in ports) _cmbCatPort.Items.Add(p);
+
+                    if (!string.IsNullOrWhiteSpace(_working.CatPort)) {
+                        int idx = _cmbCatPort.FindStringExact(_working.CatPort);
+                        _cmbCatPort.SelectedIndex = idx >= 0 ? idx : 0;
+                    } else {
+                        _cmbCatPort.SelectedIndex = 0;
+                    }
                 }
+                _cmbCatPort.EndUpdate();
 
                 // Baud rates
-                int[] bauds = new[] { 9600, 19200, 38400,57600, 115200 };
+                int[] bauds = new[] { 9600, 19200, 38400, 57600, 115200 };
                 _cmbCatBaud.BeginUpdate();
                 _cmbCatBaud.Items.Clear();
                 foreach (var b in bauds) _cmbCatBaud.Items.Add(b);
@@ -607,9 +618,21 @@ namespace ZVClusterApp.WinForms {
             try {
                 _working.CatEnabled = _chkCatEnabled.Checked;
                 _working.IcomAddress = (byte)_numCiv.Value;
-                _working.CatPort = _cmbCatPort.SelectedItem as string ?? _working.CatPort;
-                if (_cmbCatBaud.SelectedItem is int bi) _working.CatBaud = bi; else if (int.TryParse(_cmbCatBaud.SelectedItem?.ToString(), out var bval)) _working.CatBaud = bval;
-                if (_cmbRig.SelectedItem is RigType rtSel) _working.Rig = rtSel; else if (Enum.TryParse<RigType>(_cmbRig.SelectedItem?.ToString(), out var rtParsed)) _working.Rig = rtParsed;
+
+                var selPort = _cmbCatPort.SelectedItem as string ?? string.Empty;
+                if (string.Equals(selPort, "N/A", StringComparison.OrdinalIgnoreCase))
+                    selPort = string.Empty; // do not persist placeholder
+                _working.CatPort = selPort;
+
+                if (_cmbCatBaud.SelectedItem is int bi)
+                    _working.CatBaud = bi;
+                else if (int.TryParse(_cmbCatBaud.SelectedItem?.ToString(), out var bval))
+                    _working.CatBaud = bval;
+
+                if (_cmbRig.SelectedItem is RigType rtSel)
+                    _working.Rig = rtSel;
+                else if (Enum.TryParse<RigType>(_cmbRig.SelectedItem?.ToString(), out var rtParsed))
+                    _working.Rig = rtParsed;
             } catch { }
 
             // Persist Appearance (DX list font) -> working copy

@@ -352,11 +352,11 @@ namespace ZVClusterApp.WinForms
 
             var ctx = new ContextMenuStrip();
             var miJump = new ToolStripMenuItem("Jump Radio", null, (s, e) => Context_JumpRadio());
-            var miQrzSpotter = new ToolStripMenuItem("QRZ Lookup - Spotter", null, (s, e) => Context_QrzLookup(true));
             var miQrzDx = new ToolStripMenuItem("QRZ Lookup - DX", null, (s, e) => Context_QrzLookup(false));
+            var miQrzSpotter = new ToolStripMenuItem("QRZ Lookup - Spotter", null, (s, e) => Context_QrzLookup(true));
             var miDxNews = new ToolStripMenuItem("DXNews Lookup - DX", null, (s, e) => Context_DxNews());
             var miRbnDx = new ToolStripMenuItem("RBN Lookup - DX", null, (s, e) => Context_RbnLookupDx());
-            ctx.Items.AddRange(new ToolStripItem[] { miJump, miQrzSpotter, miQrzDx, miDxNews, miRbnDx });
+            ctx.Items.AddRange(new ToolStripItem[] { miJump, miQrzDx, miQrzSpotter, miDxNews, miRbnDx });
             ctx.Opening += (s, e) =>
             {
                 bool enableRbn = false;
