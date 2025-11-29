@@ -170,7 +170,12 @@ namespace ZVClusterApp.WinForms
             _clusterManager.LineReceived += Cluster_LineReceived;
             _pumpTask = Task.Run(() => ConsolePumpAsync(_cts.Token));
             _clockTimer = new System.Windows.Forms.Timer { Interval = 1000, Enabled = true }; _clockTimer.Tick += (s, e) => UpdateStatusBar(); UpdateStatusBar();
-            _layoutRefreshTimer = new System.Windows.Forms.Timer { Interval = 100, Enabled = false }; _layoutRefreshTimer.Tick += (s, e) => { _layoutRefreshTimer!.Stop(); RepaintSpotsAfterLayout(); ReassertListFont(); SaveUiSettings(); };
+            _layoutRefreshTimer = new System.Windows.Forms.Timer { Interval = 100, Enabled = false }; _layoutRefreshTimer.Tick += (s, e) =>
+            {
+                _layoutRefreshTimer!.Stop();
+                RepaintSpotsAfterLayout();
+                ReassertListFont();
+            };
             if (_settings.Ui?.SplitterDistance > 0) { try { _split.SplitterDistance = _settings.Ui.SplitterDistance; } catch { } }
             RestoreBandFiltersFromSettings(); RestoreModeFiltersFromSettings();
 
