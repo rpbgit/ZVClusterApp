@@ -191,7 +191,7 @@ namespace ZVClusterApp.WinForms
                 }
                 catch { }
             }
-            ResizeEnd += (s, e) => SaveUiSettings(); Move += (s, e) => SaveUiSettings(); SizeChanged += (s, e) => { if (WindowState == FormWindowState.Minimized) return; SaveUiSettings(); };
+            ResizeEnd += (s, e) => SaveUiSettings(); Move += (s, e) => QueueSaveUiSettings(); // debounced
             Shown += MainForm_Shown; FormClosing += MainForm_FormClosing; _lastConnectedCluster = _settings.LastConnectedCluster ?? string.Empty;
         }
 
@@ -199,7 +199,7 @@ namespace ZVClusterApp.WinForms
         {
             // MenuStrip with standard menus
             var menu = new MenuStrip { Dock = DockStyle.Top, GripStyle = ToolStripGripStyle.Hidden };
-            var miFile = new ToolStripMenuItem("File");
+            var miFile = new ToolStripMenuItem("File"); 
             var miView = new ToolStripMenuItem("View");
             var miHelp = new ToolStripMenuItem("Help");
             menu.Items.AddRange(new ToolStripItem[] { miFile, miView, miHelp });
@@ -1261,15 +1261,18 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                if (_listView == null || _listView.IsDisposed) return; if (_listView.Columns.Count == 0) return;
-                int fixedWidth = 0; for (int i = 0; i < _listView.Columns.Count - 1; i++) fixedWidth += _listView.Columns[i].Width;
+                if (_listView == null || _listView.IsDisposed) return;
+                if (_listView.Columns.Count == 0) return;
 
-                // Compute actual vertical scrollbar width based on the ListView display area
+                int fixedWidth = 0;
+                for (int i = 0; i < _listView.Columns.Count - 1; i++)
+                    fixedWidth += _listView.Columns[i].Width;
+
                 int clientW = _listView.ClientSize.Width;
                 int vScroll = 0;
                 try
                 {
-                    int displayW = _listView.DisplayRectangle.Width; // excludes visible scrollbars
+                    int displayW = _listView.DisplayRectangle.Width;
                     if (displayW > 0 && displayW <= clientW) vScroll = clientW - displayW;
                 }
                 catch { vScroll = 0; }
@@ -1277,7 +1280,10 @@ namespace ZVClusterApp.WinForms
                 const int fudge = 1;
                 int avail = clientW - fixedWidth - vScroll - fudge;
                 int info = Math.Max(80, avail);
-                _listView.Columns[_listView.Columns.Count - 1].Width = info;
+
+                var lastCol = _listView.Columns[^1];
+                if (lastCol.Width != info)
+                    lastCol.Width = info; // only set when it changed
             }
             catch { }
         }
@@ -2287,6 +2293,65 @@ namespace ZVClusterApp.WinForms
         private void MiExit_Click(object? sender, EventArgs e)
         {
             try { Close(); } catch { Application.Exit(); }
+        }
+
+        private System.Windows.Forms.Timer? _saveDebounceTimer;
+        private Rectangle _lastSavedBounds;
+        private int _lastSavedSplitter;
+
+        private void QueueSaveUiSettings()
+        {
+            try
+            {
+                _saveDebounceTimer ??= new System.Windows.Forms.Timer { Interval = 600 };
+                _saveDebounceTimer.Stop();
+                _saveDebounceTimer.Tick += (s, e) =>
+                {
+                    _saveDebounceTimer!.Stop();
+                    SaveUiSettingsIfChanged();
+                };
+                _saveDebounceTimer.Start();
+            }
+            catch { }
+        }
+
+        private void SaveUiSettingsIfChanged()
+        {
+            try
+            {
+                var curBounds = WindowState == FormWindowState.Normal
+                    ? new Rectangle(Left, Top, Width, Height)
+                    : _lastSavedBounds; // avoid saving size from maximized/minimized
+
+                var curSplit = _split?.SplitterDistance ?? 0;
+
+                bool changed =
+                    curBounds != _lastSavedBounds ||
+                    curSplit != _lastSavedSplitter ||
+                    !_enabledBands.SetEquals(_settings.Ui?.EnabledBands ?? Array.Empty<string>()) ||
+                    !_enabledModes.SetEquals(_settings.Ui?.EnabledModes ?? Array.Empty<string>());
+
+                if (!changed) return;
+
+                _settings.Ui ??= new UiSettings();
+                if (WindowState == FormWindowState.Normal)
+                {
+                    _settings.Ui.Left = curBounds.Left;
+                    _settings.Ui.Top = curBounds.Top;
+                    _settings.Ui.Width = curBounds.Width;
+                    _settings.Ui.Height = curBounds.Height;
+                    _lastSavedBounds = curBounds;
+                }
+                _settings.Ui.WindowState = (int)WindowState;
+                _settings.Ui.SplitterDistance = curSplit;
+                _lastSavedSplitter = curSplit;
+
+                _settings.Ui.EnabledBands = _enabledBands.ToArray();
+                _settings.Ui.EnabledModes = _enabledModes.ToArray();
+
+                AppSettings.Save(_settings);
+            }
+            catch { }
         }
     }
 
