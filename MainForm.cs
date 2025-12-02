@@ -361,7 +361,8 @@ namespace ZVClusterApp.WinForms
             var miQrzSpotter = new ToolStripMenuItem("QRZ Lookup - Spotter", null, (s, e) => Context_QrzLookup(true));
             var miDxNews = new ToolStripMenuItem("DXNews Lookup - DX", null, (s, e) => Context_DxNews());
             var miRbnDx = new ToolStripMenuItem("RBN Lookup - DX", null, (s, e) => Context_RbnLookupDx());
-            ctx.Items.AddRange(new ToolStripItem[] { miJump, miQrzDx, miQrzSpotter, miDxNews, miRbnDx });
+            var miClublogSearch = new ToolStripMenuItem("Clublog Log Search - DX", null, (s, e) => Context_ClublogSearch());
+            ctx.Items.AddRange(new ToolStripItem[] { miJump, miQrzDx, miClublogSearch, miRbnDx, miDxNews, miQrzSpotter });
             ctx.Opening += (s, e) =>
             {
                 bool enableRbn = false;
@@ -1550,6 +1551,26 @@ namespace ZVClusterApp.WinForms
             catch { }
         }
 
+        private void Context_ClublogSearch() {
+            try {
+                if (_listView.SelectedItems.Count == 0) return;
+                var it = _listView.SelectedItems[0];
+                var idx = 0; // dxlist idx 6 = Spotter, 0 = DX Call
+                var call = (it.SubItems.Count > idx ? it.SubItems[idx].Text : string.Empty) ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(call)) return;
+
+                // Escape each path segment separately so slashes remain as separators
+                var escapedPath = string.Join("/",
+                    call.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(seg => Uri.EscapeDataString(seg)));
+
+                Process.Start(new ProcessStartInfo {
+                    // URL for clublog log search https://clublog.org/logsearch/3G0YR
+                    FileName = $"https://clublog.org/logsearch/{escapedPath}",
+                    UseShellExecute = true
+                });
+            } catch { }
+        }
         private void Context_DxNews()
         {
             try
