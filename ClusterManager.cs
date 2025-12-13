@@ -60,10 +60,17 @@ namespace ZVClusterApp.WinForms
                     UpdateLastActivity(c.Name);
                     LineReceived?.Invoke(c.Name, line);
 
+                    // If we see any line from this cluster while it's active, unsuppress keepalive.
+                    // This handles cases where Reconnected wasn't raised but activity resumes. 9-dec-2025
+                    try {
+                        var isActive = string.Equals(ActiveClusterName, c.Name, StringComparison.OrdinalIgnoreCase);
+                        if (isActive)
+                            UnsuppressKeepAlive(c.Name);
+                    } catch { }
+
                     // Fallback: if we are connected, active on this cluster, and see a login prompt,
                     // trigger the replay even if Reconnected wasn't raised.
-                    try
-                    {
+                    try {
                         var activeName = ActiveClusterName;
                         var isActive = string.Equals(activeName, c.Name, StringComparison.OrdinalIgnoreCase);
                         var connected = client.IsConnected;
@@ -145,10 +152,15 @@ namespace ZVClusterApp.WinForms
                 // Only one worker per cluster.
                 if (_reconnectWorkers.ContainsKey(name)) return;
 
-                // Only attempt to proactively reconnect the currently active cluster (others are idle until chosen).
-                if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
-
+                // Relaxed: if no active cluster is set, adopt the faulted one to drive recovery.
                 if (!_clients.TryGetValue(name, out var client)) return;
+                if (string.IsNullOrEmpty(ActiveClusterName)) {
+                    ActiveClusterName = name;
+                    _activeClient = client;
+                }
+
+                // If a different cluster was made active, still proceed if this is the adopted/only cluster.
+                // Previously: if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
 
                 var cts = new CancellationTokenSource();
                 var token = cts.Token;
@@ -459,45 +471,67 @@ namespace ZVClusterApp.WinForms
         /// </summary>
         private void StartKeepAliveLoop()
         {
+            // Keepalive loop: snapshot all needed state under one lock, no 'goto'.
             _keepAliveTask = Task.Run(async () =>
             {
                 var token = _keepAliveCts.Token;
                 var inactivity = TimeSpan.FromMinutes(3);
+
                 while (!token.IsCancellationRequested)
                 {
                     try
                     {
                         await Task.Delay(TimeSpan.FromSeconds(30), token).ConfigureAwait(false);
-                        var now = DateTime.UtcNow;
-                        var activeName = ActiveClusterName;
-                        var client = _activeClient;
-                        if (string.IsNullOrEmpty(activeName) || client == null)
-                            continue; // nothing active -> skip
 
+                        // Snapshot under a single lock to avoid mixed-state decisions
+                        string? activeName;
+                        ClusterClient? client;
                         bool suppressed;
                         DateTime lastAct;
+                        DateTime lastKeep;
+                        
+                        // 12-Dec-2025 Capture all needed state under one lock
                         lock (_activityLock)
                         {
-                            suppressed = _keepAliveSuppressed.Contains(activeName);
-                            lastAct = _lastActivityUtc.TryGetValue(activeName, out var dt) ? dt : now;
-                        }
-                        if (suppressed)
-                            continue; // currently faulted -> wait for reconnect
+                            activeName = ActiveClusterName;
+                            client = _activeClient;
 
-                        var lastKeep = _lastKeepAliveUtc.TryGetValue(activeName, out var lk) ? lk : DateTime.MinValue;
+                            suppressed = !string.IsNullOrEmpty(activeName) &&
+                                         _keepAliveSuppressed.Contains(activeName);
+
+                            lastAct = (!string.IsNullOrEmpty(activeName) &&
+                                       _lastActivityUtc.TryGetValue(activeName, out var dt))
+                                       ? dt
+                                       : DateTime.UtcNow;
+
+                            lastKeep = (!string.IsNullOrEmpty(activeName) &&
+                                        _lastKeepAliveUtc.TryGetValue(activeName, out var lk))
+                                        ? lk
+                                        : DateTime.MinValue;
+                        }
+
+                        // Skip when no active client
+                        if (string.IsNullOrEmpty(activeName) || client == null)
+                            continue;
+
+                        // Skip when suppressed due to fault
+                        if (suppressed)
+                            continue;
+
+                        var now = DateTime.UtcNow;
 
                         // Inactivity threshold reached for both last activity and last keepalive -> send ping.
                         if (now - lastAct >= inactivity && now - lastKeep >= inactivity)
                         {
                             try
                             {
-                                await client.SendRawLineAsync(" ").ConfigureAwait(false); // space keeps connection alive
-                                _lastKeepAliveUtc[activeName] = now; // record successful keepalive
+                                await client.SendRawLineAsync(" ").ConfigureAwait(false); // keepalive ping
+                                lock (_activityLock) _lastKeepAliveUtc[activeName] = now; // record successful keepalive
                             }
                             catch
                             {
-                                // Any failure sending keepalive -> suppress further pings until reconnect and start proactive reconnection.
-                                SuppressKeepAlive(activeName);
+                                // Any failure sending keepalive -> suppress pings and start proactive reconnect
+                                lock (_activityLock) _keepAliveSuppressed.Add(activeName);
                                 StartReconnectWorker(activeName);
                             }
                         }
