@@ -52,6 +52,11 @@ namespace ZVClusterApp.WinForms
             }
         }
 
+        // New: identity must be provided by concrete drivers so they can
+        // choose the correct CAT/CIV profile and formatting internally.
+        public abstract string Manufacturer { get; }
+        public abstract string ModelId { get; set; }
+
         public virtual bool Connect()
         {
             Debug.WriteLine($"[CAT] Connect: Enabled={Enabled}, Port={Port}, Baud={Baud}");
@@ -102,6 +107,38 @@ namespace ZVClusterApp.WinForms
             {
                 if (!Connect()) throw new InvalidOperationException("Port not open");
             }
+        }
+
+        // Helper: write ASCII CAT, optionally appending a terminator (e.g., ';' or CRLF).
+        protected void WriteAscii(string command, string terminator = "")
+        {
+            EnsureOpen();
+            if (_serial == null) throw new InvalidOperationException("Port not open");
+            var payload = command ?? string.Empty;
+            if (!string.IsNullOrEmpty(terminator) && !payload.EndsWith(terminator, StringComparison.Ordinal))
+                payload += terminator;
+            // Log exactly what will be sent (ASCII)
+            try
+            {
+                Debug.WriteLine($"[CAT:WRITE ASCII] Port={_serial.PortName} Baud={_serial.BaudRate} Data='{payload.Replace("\r", "\\r").Replace("\n", "\\n")}'");
+            }
+            catch { }
+            _serial.Write(payload);
+        }
+
+        // Helper: write binary CAT/CIV payload (raw bytes).
+        protected void WriteBinary(ReadOnlySpan<byte> payload)
+        {
+            EnsureOpen();
+            if (_serial == null) throw new InvalidOperationException("Port not open");
+            // Log exactly what will be sent (HEX bytes)
+            try
+            {
+                var hex = string.Join(" ", payload.ToArray().Select(b => b.ToString("X2")));
+                Debug.WriteLine($"[CAT:WRITE BIN] Port={_serial.PortName} Baud={_serial.BaudRate} Bytes=[{hex}]");
+            }
+            catch { }
+            _serial.BaseStream.Write(payload);
         }
     }
 }

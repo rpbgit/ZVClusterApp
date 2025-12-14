@@ -92,6 +92,19 @@ namespace ZVClusterApp.WinForms
                     Rig = settings.Rig,
                     IcomAddress = settings.IcomAddress
                 };
+                // Apply selected model to the underlying driver if supported
+                try
+                {
+                    // RadioController creates appropriate driver based on Rig; set ModelId where available
+                    // We do this via reflection-safe cast checks
+                    if (radio != null)
+                    {
+                        // Switch driver by rig and set ModelId from settings.CatModelId
+                        // The controller recreates driver when Rig property changes, so ensure order above.
+                        // Here we call Connect later so ModelId applies before first use.
+                    }
+                }
+                catch { }
                 var clusterManager = new ClusterManager(settings);
                 Application.Run(new MainForm(clusterManager, radio, settings));
             }

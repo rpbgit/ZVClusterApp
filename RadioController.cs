@@ -9,6 +9,7 @@ namespace ZVClusterApp.WinForms
     {
         private IRadioDriver _driver;
         private RigType _rig;
+        private string _modelId = "IC-7300"; // default model selection
 
         public RadioController(string port, int baud, bool enabled)
         {
@@ -27,6 +28,8 @@ namespace ZVClusterApp.WinForms
                 Debug.WriteLine($"[Radio] Rig changing: {_rig} -> {value}");
                 var old = _driver;
                 _driver = CreateDriver(value, old.Port, old.Baud, old.Enabled);
+                // Preserve model selection across driver switches
+                try { _driver.ModelId = _modelId; } catch { }
                 try { old.Dispose(); } catch { }
                 _rig = value;
             }
@@ -44,12 +47,26 @@ namespace ZVClusterApp.WinForms
         public string Port { get => _driver.Port; set => _driver.Port = value; }
         public int Baud { get => _driver.Baud; set => _driver.Baud = value; }
 
+        // Selected model ID facade for settings dialog
+        public string ModelId
+        {
+            get => _modelId;
+            set
+            {
+                _modelId = value ?? _modelId;
+                try { _driver.ModelId = _modelId; } catch { }
+            }
+        }
+
         public bool Connect() => _driver.Connect();
         public void Disconnect() => _driver.Disconnect();
 
         public bool SendFrequency(int frequencyHz, string? mode = null)
         {
             Debug.WriteLine($"[Radio] SendFrequency facade: {frequencyHz} Hz, mode='{mode}' via {_rig}");
+        // Inhibit mode : pass null instead of mode based on a setting/flag
+        //var effectiveMode = null; // AppSettings.Current?.InhibitModeSend == true ? null : mode;
+        //return _driver.SetFrequencyAndMode(frequencyHz, effectiveMode);
             return _driver.SetFrequencyAndMode(frequencyHz, mode);
         }
 

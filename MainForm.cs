@@ -165,6 +165,8 @@ namespace ZVClusterApp.WinForms
             if (_settings.Ui != null && _settings.Ui.Width > 0 && _settings.Ui.Height > 0) { Width = _settings.Ui.Width; Height = _settings.Ui.Height; }
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             InitializeUi();
+            // Apply persisted CAT model to radio driver on startup so the correct CAT/CIV profile is used.
+            try { _radio.ModelId = _settings.CatModelId; } catch { }
             PopulateClustersCombo();
             EnsureCtyDatLoadedOnBoot();
             _clusterManager.LineReceived += Cluster_LineReceived;
@@ -1857,6 +1859,8 @@ namespace ZVClusterApp.WinForms
                     _radio.Baud = _settings.CatBaud;
                     _radio.Rig = _settings.Rig;
                     _radio.IcomAddress = _settings.IcomAddress;
+                    // Apply selected model id from settings
+                    _radio.ModelId = _settings.CatModelId;
                 }
                 catch { }
 

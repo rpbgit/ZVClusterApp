@@ -5,87 +5,149 @@ using System.Threading;
 
 namespace ZVClusterApp.WinForms
 {
+    /// <summary>
+    /// Icom CI-V driver. CI-V is a binary protocol: FE FE [to] [from] [cmd] [data...] FD.
+    /// This driver keeps a high-level API and builds CI-V frames internally per model profile.
+    /// </summary>
     public sealed class IcomCivDriver : SerialRadioDriverBase
     {
-        public byte IcomAddress { get; set; } = 0x94;
-        private const byte CivPcAddress = 0xE0;
+        // Manufacturer label
+        public override string Manufacturer => "Icom";
 
+        // CI-V address varies per model (default commonly 0x94 for IC-7300)
+        public byte IcomAddress { get; set; } = 0x94;
+
+        // Selected model ID (affects CI-V profile)
+        private string _modelId = "IC-7300";
+        public override string ModelId
+        {
+            get => _modelId;
+            set
+            {
+                var newId = string.IsNullOrWhiteSpace(value) ? _modelId : value.Trim();
+                if (!string.Equals(_modelId, newId, StringComparison.OrdinalIgnoreCase))
+                {
+                    _modelId = newId;
+                    SelectProfile(_modelId);
+                    Disconnect();
+                    Debug.WriteLine($"[CAT:Icom] Model set: {_modelId}, CI-V=0x{IcomAddress:X2}");
+                }
+            }
+        }
+
+        // Current CI-V profile
+        private CivProfile _profile = CivProfile.Default7300();
+
+        private void SelectProfile(string id)
+        {
+            var map = new Dictionary<string, Func<CivProfile>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["IC-7300"] = CivProfile.Default7300,
+                ["IC-705"]  = CivProfile.Default705,
+                ["IC-7610"] = CivProfile.Default7610
+            };
+            _profile = map.TryGetValue(id, out var factory) ? factory() : CivProfile.Default7300();
+
+            // Optional: adjust default CI-V address heuristically
+            IcomAddress = id.ToUpperInvariant() switch
+            {
+                "IC-705" => 0xA4,
+                "IC-7610" => 0x98,
+                _ => IcomAddress
+            };
+        }
+
+        /// <summary>
+        /// High-level set frequency/mode. Builds CI-V frames via profile and writes as binary.
+        /// </summary>
         public override bool SetFrequencyAndMode(int frequencyHz, string? mode)
         {
             if (!Enabled) { Debug.WriteLine("[CAT] Icom: disabled"); return false; }
             try
             {
-                EnsureOpen();
-                // Frequency frame (0x05)
-                var freqPayload = BuildIcomFrequencyPayload(frequencyHz);
-                var freqFrame = BuildIcomFrame(IcomAddress, 0x05, freqPayload);
-                _serial!.Write(freqFrame, 0, freqFrame.Length);
-                Debug.WriteLine($"[CAT] Icom FREQ: {Hex(freqFrame)}");
+                var freqCmd = _profile.BuildSetFrequency(IcomAddress, Math.Max(0, frequencyHz));
+                WriteBinary(freqCmd);
 
                 if (!string.IsNullOrWhiteSpace(mode))
                 {
-                    // Small inter-command delay
-                    Thread.Sleep(100);
-
-                    var (modeCode, filter) = MapIcomMode(mode!);
-                    var modeFrame = BuildIcomFrame(IcomAddress, 0x06, new byte[] { modeCode, filter });
-                    _serial.Write(modeFrame, 0, modeFrame.Length);
-                    Debug.WriteLine($"[CAT] Icom MODE: {Hex(modeFrame)}");
+                    var modeCmd = _profile.BuildSetMode(IcomAddress, (mode ?? string.Empty).Trim().ToUpperInvariant());
+                    WriteBinary(modeCmd);
                 }
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[CAT] Icom send failed: {ex.GetType().Name}: {ex.Message}");
+                Debug.WriteLine($"[CAT:Icom] SetFrequencyAndMode failed: {ex.Message}");
                 return false;
             }
         }
 
-        private static byte[] BuildIcomFrame(byte toAddress, byte cmd, ReadOnlySpan<byte> payload)
+        // ----- Profile types -----
+        private static class Civ
         {
-            var buf = new byte[5 + payload.Length + 1];
-            int i = 0;
-            buf[i++] = 0xFE; buf[i++] = 0xFE;
-            buf[i++] = toAddress;
-            buf[i++] = CivPcAddress;
-            buf[i++] = cmd;
-            for (int p = 0; p < payload.Length; p++) buf[i++] = payload[p];
-            buf[i++] = 0xFD;
-            return buf;
+            public const byte Pc = 0xE0; // PC address in CI-V
+            public static byte[] Header(byte to) => new[] { (byte)0xFE, (byte)0xFE, to, Pc };
+            public static byte[] Trailer() => new[] { (byte)0xFD };
         }
 
-        private static byte[] BuildIcomFrequencyPayload(int frequencyHz)
+        private sealed class CivProfile
         {
-            var s = Math.Abs(frequencyHz).ToString("D10", CultureInfo.InvariantCulture); // 10 digits
-            var bytes = new byte[5];
-            for (int i = 0; i < 5; i++)
+            public Func<byte, int, byte[]> BuildSetFrequency { get; init; } = (addr, hz) => Array.Empty<byte>();
+            public Func<byte, string, byte[]> BuildSetMode { get; init; } = (addr, mode) => Array.Empty<byte>();
+
+            private static byte[] HzToBcd5(int hz)
             {
-                int start = s.Length - 2 * (i + 1);
-                int tens = start >= 0 ? s[start] - '0' : 0;
-                int ones = start + 1 >= 0 ? s[start + 1] - '0' : 0;
-                bytes[i] = (byte)((tens << 4) | (ones & 0x0F));
+                // Convert Hz to 10 ASCII digits, pack into 5 BCD bytes LSB-first per CI-V conventions.
+                var s = Math.Max(0, hz).ToString("D10", System.Globalization.CultureInfo.InvariantCulture);
+                var bytes = new byte[5];
+                for (int i = 0; i < 5; i++)
+                {
+                    int idx = s.Length - 2 * (i + 1);
+                    int tens = idx >= 0 ? s[idx] - '0' : 0;
+                    int ones = idx + 1 >= 0 ? s[idx + 1] - '0' : 0;
+                    bytes[i] = (byte)((tens << 4) | (ones & 0x0F));
+                }
+                return bytes;
             }
-            return bytes;
-        }
 
-        private static (byte mode, byte filter) MapIcomMode(string mode)
-        {
-            switch ((mode ?? string.Empty).Trim().ToUpperInvariant())
+            public static CivProfile Default7300() => new CivProfile
             {
-                case "LSB": return (0x00, 0x01);
-                case "USB": return (0x01, 0x01);
-                case "AM": return (0x02, 0x01);
-                case "CW": return (0x03, 0x01);
-                case "RTTY": return (0x04, 0x01);
-                case "FM": return (0x05, 0x01);
-                case "DATA": return (0x01, 0x01); // USB fallback
-                default: return (0x01, 0x01);
-            }
-        }
+                BuildSetFrequency = (addr, hz) =>
+                {
+                    var header = Civ.Header(addr);
+                    var payload = HzToBcd5(hz);
+                    var frame = new byte[header.Length + 1 + payload.Length + 1];
+                    int i = 0; Array.Copy(header, 0, frame, i, header.Length); i += header.Length;
+                    frame[i++] = 0x05; // Set freq
+                    Array.Copy(payload, 0, frame, i, payload.Length); i += payload.Length;
+                    Array.Copy(Civ.Trailer(), 0, frame, i, 1);
+                    return frame;
+                },
+                BuildSetMode = (addr, mode) =>
+                {
+                    byte code = mode switch
+                    {
+                        "LSB" => (byte)0x00,
+                        "USB" => (byte)0x01,
+                        "AM"  => (byte)0x02,
+                        "CW"  => (byte)0x03,
+                        "FM"  => (byte)0x05,
+                        "DATA" or "DAT" => (byte)0x07,
+                        _ => (byte)0x01
+                    };
+                    var header = Civ.Header(addr);
+                    var frame = new byte[header.Length + 3 + 1];
+                    int i = 0; Array.Copy(header, 0, frame, i, header.Length); i += header.Length;
+                    frame[i++] = 0x06; // Set mode
+                    frame[i++] = code; // Mode code
+                    // zv too many zero's frame[i++] = 0x00; // Filter placeholder
+                    Array.Copy(Civ.Trailer(), 0, frame, i, 1);
+                    return frame;
+                }
+            };
 
-        private static string Hex(byte[] data)
-        {
-            return BitConverter.ToString(data).Replace('-', ' ');
+            public static CivProfile Default705() => Default7300();
+            public static CivProfile Default7610() => Default7300();
         }
     }
 }

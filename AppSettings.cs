@@ -96,6 +96,9 @@ namespace ZVClusterApp.WinForms
         public int CatBaud { get; set; } = 19200;
         public RigType Rig { get; set; } = RigType.Icom;
 
+        // Selected radio model ID used by drivers to choose CAT/CIV profile
+        public string CatModelId { get; set; } = "IC-7300";
+
         public byte IcomAddress { get; set; } = 0x94;
 
         // Distance unit preference: false = statute miles (default), true = kilometers
@@ -300,6 +303,8 @@ namespace ZVClusterApp.WinForms
             });
 
             def.FavoriteDxCalls = new List<string>(); // default empty
+            // Default CAT model selection sensible for Icom users
+            def.CatModelId = "IC-7300";
             Save(def);
             return def;
         }

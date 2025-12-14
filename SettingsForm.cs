@@ -47,12 +47,15 @@ namespace ZVClusterApp.WinForms {
         private ComboBox _cmbCatPort = null!;
         private ComboBox _cmbCatBaud = null!;
         private ComboBox _cmbRig = null!;
+        private ComboBox _cmbModel = null!; // new: model selection
         private Label _lblCatPort = null!;
         private Label _lblCatBaud = null!;
         private Label _lblRig = null!;
+        private Label _lblModel = null!;
         private CheckBox _chkCatEnabled = null!;
         private Label _lblCiv = null!;
         private NumericUpDown _numCiv = null!;
+        private Label _lblCivNote = null!; // note: applies to Icom only
 
         // New: Spot Server group controls
         private GroupBox _grpSpot = null!;
@@ -248,7 +251,7 @@ namespace ZVClusterApp.WinForms {
             _grpUser.Controls.AddRange(new Control[] { lblMyCall, _txtMyCall, lblName, _txtName, lblGmt, _numGmt, lblQth, _txtQth, lblGrid, _txtGrid });
 
             // Spot Server group under user profile
-            _grpSpot = new GroupBox { Text = "Spot Server", Location = new Point(12, 330), Size = new Size(540, 110), Name = "_grpSpot" };
+            _grpSpot = new GroupBox { Text = "Spot Server", Location = new Point(12, 330), Size = new Size(540, 85), Name = "_grpSpot" };
             lblServerPort.Text = "Port:"; lblServerPort.AutoSize = true; lblServerPort.Location = new Point(15, 32);
             _numServerPort.Minimum = 1; _numServerPort.Maximum = 65535; _numServerPort.Value = 7373; _numServerPort.Location = new Point(60, 28); _numServerPort.Size = new Size(80, 23);
             _chkUseKm = new CheckBox { Text = "Use kilometers for distances", Location = new Point(160, 30), AutoSize = true };
@@ -272,11 +275,15 @@ namespace ZVClusterApp.WinForms {
             _cmbCatBaud.DropDownStyle = ComboBoxStyle.DropDownList; _cmbCatBaud.Location = new Point(310, 18); _cmbCatBaud.Width = 80;
             _lblRig = new Label { Text = "Rig:", Location = new Point(15, 52), AutoSize = true };
             _cmbRig.DropDownStyle = ComboBoxStyle.DropDownList; _cmbRig.Location = new Point(60, 48); _cmbRig.Width = 120;
-            _lblCiv = new Label { Text = "CI-V:", Location = new Point(200, 52), AutoSize = true };
-            _numCiv.Minimum = 0x00; _numCiv.Maximum = 0xFF; _numCiv.Hexadecimal = true; _numCiv.Location = new Point(240, 48); _numCiv.Size = new Size(70, 23);
+            _lblModel = new Label { Text = "Model:", Location = new Point(200, 52), AutoSize = true };
+            _cmbModel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(255, 48), Width = 200 };
+            // CI-V address (Icom only) — placed below the model selection
+            _lblCiv = new Label { Text = "CI-V Address:", Location = new Point(200, 78), AutoSize = true };
+            _numCiv.Minimum = 0x00; _numCiv.Maximum = 0xFF; _numCiv.Hexadecimal = true; _numCiv.Location = new Point(300, 74); _numCiv.Size = new Size(70, 23);
+            _lblCivNote = new Label { Text = "(Icom only)", Location = new Point(380, 78), AutoSize = true, ForeColor = SystemColors.GrayText };
 
             _grpCat.Controls.Clear();
-            _grpCat.Controls.AddRange(new Control[] { _chkCatEnabled, _lblCatPort, _cmbCatPort, _lblCatBaud, _cmbCatBaud, _lblRig, _cmbRig, _lblCiv, _numCiv });
+            _grpCat.Controls.AddRange(new Control[] { _chkCatEnabled, _lblCatPort, _cmbCatPort, _lblCatBaud, _cmbCatBaud, _lblRig, _cmbRig, _lblModel, _cmbModel, _lblCiv, _numCiv, _lblCivNote });
 
             // CTY.DAT group below CAT
             _grpCty.Text = "CTY.DAT"; _grpCty.Location = new Point(400, 570); _grpCty.Size = new Size(480, 70); _grpCty.Name = "_grpCty";
@@ -309,6 +316,7 @@ namespace ZVClusterApp.WinForms {
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(904, 800);
+            //zv this.BackColor = Color.Bisque; // or your preferred color
             Controls.Clear();
             Controls.AddRange(new Control[] {
                 _grpSources,
@@ -375,6 +383,20 @@ namespace ZVClusterApp.WinForms {
             PopulateCatControls();
             _chkCatEnabled.Checked = _working.CatEnabled;
             _numCiv.Value = _working.IcomAddress;
+            // Handle rig/model interactions
+            _cmbRig.SelectedIndexChanged += (s, e) => PopulateModelList();
+            _cmbModel.SelectedIndexChanged += (s, e) =>
+            {
+                try
+                {
+                    var rig = _cmbRig.SelectedItem is RigType rt ? rt : RigType.Icom;
+                    if (rig != RigType.Icom) return;
+
+                    var model = _cmbModel.SelectedItem as string ?? string.Empty;
+                    _numCiv.Value = DefaultIcomCivForModel(model); // IC-7610 -> 0x98, IC-7300 -> 0x94
+                }
+                catch { }
+            };
 
             // CTY.DAT boot check
             _chkCtyBoot.Checked = _working.CheckCtyOnBoot;
@@ -485,7 +507,65 @@ namespace ZVClusterApp.WinForms {
                     if (_cmbRig.Items[i] is RigType rt && rt == _working.Rig) { ridx = i; break; }
                 }
                 _cmbRig.SelectedIndex = ridx >= 0 ? ridx : 0;
+
+                // Initial model list for the selected rig
+                PopulateModelList();
+                // Preselect persisted model id
+                if (!string.IsNullOrWhiteSpace(_working.CatModelId))
+                {
+                    int midx = _cmbModel.FindStringExact(_working.CatModelId);
+                    _cmbModel.SelectedIndex = midx >= 0 ? midx : (_cmbModel.Items.Count > 0 ? 0 : -1);
+                }
             } catch { }
+        }
+
+        // Populate supported models per rig, as requested: Icom IC-7300, IC-7610; Kenwood TS-590; Yaesu FT-991, FT-891, FT-101, FTDX10, FTDX1200/3000 (ASCII);
+        // and Yaesu legacy binary: FT-817/818, FT-857, FT-897.
+        private void PopulateModelList()
+        {
+            try
+            {
+                _cmbModel.BeginUpdate();
+                _cmbModel.Items.Clear();
+                var rig = _cmbRig.SelectedItem is RigType rt ? rt : RigType.Icom;
+                switch (rig)
+                {
+                    case RigType.Icom:
+                        _cmbModel.Items.AddRange(new object[] { "IC-7300", "IC-7610" });
+                        // Show CI-V address control for Icom
+                        _lblCiv.Visible = true; _numCiv.Visible = true; _lblCivNote.Visible = true;
+                        break;
+                    case RigType.Kenwood:
+                        _cmbModel.Items.AddRange(new object[] { "TS-590", "TS-480", "TS-2000", "TS-890", "TS-990" });
+                        _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
+                        break;
+                    case RigType.Yaesu:
+                        _cmbModel.Items.AddRange(new object[] { "FT-991", "FT-891", "FT-101", "FTDX10", "FTDX1200", "FTDX3000", "FT-817", "FT-818", "FT-857", "FT-897" });
+                        _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
+                        break;
+                    default:
+                        _cmbModel.Items.Add("IC-7300");
+                        _lblCiv.Visible = true; _numCiv.Visible = true; _lblCivNote.Visible = true;
+                        break;
+                }
+                if (_cmbModel.Items.Count > 0 && _cmbModel.SelectedIndex < 0)
+                    _cmbModel.SelectedIndex = 0;
+                // Initialize CI-V for Icom using the already-resolved rig value
+                try
+                {
+                    if (rig == RigType.Icom)
+                    {
+                        var model = _cmbModel.SelectedItem as string ?? string.Empty;
+                        // Seed CI-V to the model default when switching to Icom rig.
+                        // This does not overwrite if user already changed _numCiv during this session.
+                        if (_numCiv.Value == 0 || _working.CatModelId != model)
+                            _numCiv.Value = DefaultIcomCivForModel(model);
+                    }
+                }
+                catch { }
+            }
+            catch { }
+            finally { _cmbModel.EndUpdate(); }
         }
 
         private void EnsureClusterColumns() {
@@ -633,6 +713,9 @@ namespace ZVClusterApp.WinForms {
                     _working.Rig = rtSel;
                 else if (Enum.TryParse<RigType>(_cmbRig.SelectedItem?.ToString(), out var rtParsed))
                     _working.Rig = rtParsed;
+
+                // Persist selected model ID
+                _working.CatModelId = _cmbModel.SelectedItem as string ?? _working.CatModelId;
             } catch { }
 
             // Persist Appearance (DX list font) -> working copy
@@ -849,6 +932,7 @@ namespace ZVClusterApp.WinForms {
                 CatPort = src.CatPort,
                 CatBaud = src.CatBaud,
                 Rig = src.Rig,
+                CatModelId = src.CatModelId,
                 IcomAddress = src.IcomAddress,
                 UseKilometers = src.UseKilometers,
                 SettingsLeft = src.SettingsLeft,
@@ -912,6 +996,7 @@ namespace ZVClusterApp.WinForms {
             dst.CatPort = src.CatPort;
             dst.CatBaud = src.CatBaud;
             dst.Rig = src.Rig;
+            dst.CatModelId = src.CatModelId;
             dst.IcomAddress = src.IcomAddress;
             dst.UseKilometers = src.UseKilometers;
             // Preserve SettingsLeft/Top already updated in OnFormClosing
@@ -964,6 +1049,18 @@ namespace ZVClusterApp.WinForms {
             [DisplayName("12m")] public string C12m { get; set; } = "#FFEB3B";
             [DisplayName("10m")] public string C10m { get; set; } = "#D32F2F";
             [DisplayName("6m")] public string C6m { get; set; } = "#3F51B5";
+        }
+
+        // private helper
+        private static byte DefaultIcomCivForModel(string modelId)
+        {
+            switch ((modelId ?? "").Trim().ToUpperInvariant())
+            {
+                case "IC-7610": return 0x98;
+                case "IC-705":  return 0xA4;
+                case "IC-7300":
+                default:        return 0x94; // common default
+            }
         }
     }
 }
