@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO.Ports;
 
 namespace ZVClusterApp.WinForms
 {
@@ -47,6 +48,20 @@ namespace ZVClusterApp.WinForms
         public string Port { get => _driver.Port; set => _driver.Port = value; }
         public int Baud { get => _driver.Baud; set => _driver.Baud = value; }
 
+        // StopBits passthrough as 1 or 2 (maps to enum inside driver)
+        public int StopBits
+        {
+            get
+            {
+                if (_driver is SerialRadioDriverBase srb) return srb.StopBits;
+                return 1;
+            }
+            set
+            {
+                if (_driver is SerialRadioDriverBase srb) srb.StopBits = (value == 2) ? 2 : 1;
+            }
+        }
+
         // Selected model ID facade for settings dialog
         public string ModelId
         {
@@ -64,10 +79,23 @@ namespace ZVClusterApp.WinForms
         public bool SendFrequency(int frequencyHz, string? mode = null)
         {
             Debug.WriteLine($"[Radio] SendFrequency facade: {frequencyHz} Hz, mode='{mode}' via {_rig}");
-        // Inhibit mode : pass null instead of mode based on a setting/flag
-        //var effectiveMode = null; // AppSettings.Current?.InhibitModeSend == true ? null : mode;
-        //return _driver.SetFrequencyAndMode(frequencyHz, effectiveMode);
             return _driver.SetFrequencyAndMode(frequencyHz, mode);
+        }
+
+        // Helper to apply settings after the Settings dialog saves
+        public void ApplySettings(AppSettings s)
+        {
+            // These setters trigger Disconnect() on change in the driver; lazy reconnect happens on next write.
+            Enabled = s.CatEnabled;
+            Port = s.CatPort;
+            Baud = s.CatBaud;
+            StopBits = (s.CatStopBits == System.IO.Ports.StopBits.Two) ? 2 : 1;
+
+            Rig = s.Rig;
+            ModelId = s.CatModelId;
+
+            // Icom CI-V address (Icom only)
+            IcomAddress = s.IcomAddress;
         }
 
         private static IRadioDriver CreateDriver(RigType rig, string port, int baud, bool enabled)
@@ -79,7 +107,11 @@ namespace ZVClusterApp.WinForms
                 RigType.Yaesu => new YaesuCatDriver(),
                 _ => new IcomCivDriver(),
             };
-            drv.Port = port; drv.Baud = baud; drv.Enabled = enabled;
+            drv.Port = port;
+            drv.Baud = baud;
+            drv.Enabled = enabled;
+            // Apply persisted StopBits to the driver
+            try { drv.StopBits = AppSettings.Load().CatStopBits == System.IO.Ports.StopBits.Two ? 2 : 1; } catch { drv.StopBits = 1; }
             return drv;
         }
 

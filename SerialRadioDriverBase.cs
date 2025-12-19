@@ -13,6 +13,7 @@ namespace ZVClusterApp.WinForms
         private bool _enabled;
         private string _port = "COM1";
         private int _baud = 19200;
+        private global::System.IO.Ports.StopBits _stopBits = global::System.IO.Ports.StopBits.One;
 
         public bool Enabled
         {
@@ -33,6 +34,7 @@ namespace ZVClusterApp.WinForms
             {
                 var newPort = string.IsNullOrWhiteSpace(value) ? "COM1" : value.Trim();
                 if (string.Equals(_port, newPort, StringComparison.OrdinalIgnoreCase)) return;
+                Debug.WriteLine($"[CAT] Port changing: {_port} -> {newPort}");
                 _port = newPort;
                 // Changing port while open requires a reconnect with new settings.
                 Disconnect();
@@ -46,8 +48,23 @@ namespace ZVClusterApp.WinForms
             {
                 var newBaud = value <= 0 ? 19200 : value;
                 if (_baud == newBaud) return;
+                Debug.WriteLine($"[CAT] Baud changing: {_baud} -> {newBaud}");
                 _baud = newBaud;
                 // Changing baud while open requires a reconnect with new settings.
+                Disconnect();
+            }
+        }
+
+        // Configurable StopBits as integer (1 or 2). Changing while open triggers reconnect.
+        public int StopBits
+        {
+            get => _stopBits == global::System.IO.Ports.StopBits.Two ? 2 : 1;
+            set
+            {
+                var newEnum = value == 2 ? global::System.IO.Ports.StopBits.Two : global::System.IO.Ports.StopBits.One;
+                if (_stopBits == newEnum) return;
+                Debug.WriteLine($"[CAT] StopBits changing: {(StopBits == 2 ? 2 : 1)} -> {(value == 2 ? 2 : 1)}");
+                _stopBits = newEnum;
                 Disconnect();
             }
         }
@@ -59,7 +76,10 @@ namespace ZVClusterApp.WinForms
 
         public virtual bool Connect()
         {
-            Debug.WriteLine($"[CAT] Connect: Enabled={Enabled}, Port={Port}, Baud={Baud}");
+            // Resolve StopBits once for both logging and opening
+            var stopBitsInt = StopBits;
+            var stopBitsEnum = _stopBits;
+            Debug.WriteLine($"[CAT] Connect: Enabled={Enabled}, Port={Port}, Baud={Baud}, Parity={Parity.None}, DataBits={8}, StopBits={stopBitsInt}, Handshake={Handshake.None}, ReadTimeout={500}, WriteTimeout={500}");
             if (!Enabled) { Debug.WriteLine("[CAT] Connect aborted: disabled"); return false; }
             try
             {
@@ -69,7 +89,7 @@ namespace ZVClusterApp.WinForms
                     WriteTimeout = 500,
                     Parity = Parity.None,
                     DataBits = 8,
-                    StopBits = StopBits.One,
+                    StopBits = stopBitsEnum,
                     Handshake = Handshake.None
                 };
                 _serial.Open();
@@ -87,14 +107,30 @@ namespace ZVClusterApp.WinForms
         {
             try
             {
-                if (_serial != null)
+                var sp = _serial; // capture reference
+                if (sp != null)
                 {
-                    Debug.WriteLine($"[CAT] Disconnect: Port={_serial.PortName}, IsOpen={_serial.IsOpen}, Baud={Baud}");
-                    try { _serial.Close(); } catch (Exception ex) { Debug.WriteLine($"[CAT] Close error: {ex.Message}"); }
+                    Debug.WriteLine($"[CAT] Disconnect: Port={sp.PortName}, IsOpen={sp.IsOpen}, Baud={Baud}");
+                    // Ensure subsequent calls see null immediately
+                    _serial = null;
+                    Debug.WriteLine("[CAT] Disconnect: _serial set to null");
+                    try
+                    {
+                        sp.Close();
+                        Debug.WriteLine("[CAT] Port closed");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[CAT] Close error: {ex.Message}");
+                    }
+                } else {
+                    Debug.WriteLine("[CAT] Disconnect: _serial was already null");
                 }
             }
-            catch { }
-            finally { _serial = null; }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[CAT] Disconnect unexpected error: {ex.Message}");
+            }
         }
 
         public abstract bool SetFrequencyAndMode(int frequencyHz, string? mode);
@@ -139,6 +175,17 @@ namespace ZVClusterApp.WinForms
             }
             catch { }
             _serial.BaseStream.Write(payload);
+        }
+
+        // New: ApplySettings method to update properties from AppSettings.
+        public void ApplySettings(AppSettings s)
+        {
+            // Map AppSettings CAT section to driver properties
+            Enabled = s.CatEnabled;
+            Port = s.CatPort;
+            Baud = s.CatBaud;
+            // Driver StopBits expects 1 or 2; settings store enum
+            StopBits = s.CatStopBits == global::System.IO.Ports.StopBits.Two ? 2 : 1;
         }
     }
 }

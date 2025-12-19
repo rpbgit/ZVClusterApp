@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.IO.Ports;
 
 namespace ZVClusterApp.WinForms
 {
@@ -94,6 +95,8 @@ namespace ZVClusterApp.WinForms
         public bool CatEnabled { get; set; } = false;
         public string CatPort { get; set; } = "COM1";
         public int CatBaud { get; set; } = 19200;
+        // New: persisted stop bits configuration for CAT serial port
+        public StopBits CatStopBits { get; set; } = StopBits.One;
         public RigType Rig { get; set; } = RigType.Icom;
 
         // Selected radio model ID used by drivers to choose CAT/CIV profile

@@ -1854,13 +1854,7 @@ namespace ZVClusterApp.WinForms
                 // Apply CAT changes dynamically to the existing radio controller
                 try
                 {
-                    _radio.Enabled = _settings.CatEnabled;
-                    _radio.Port = _settings.CatPort;
-                    _radio.Baud = _settings.CatBaud;
-                    _radio.Rig = _settings.Rig;
-                    _radio.IcomAddress = _settings.IcomAddress;
-                    // Apply selected model id from settings
-                    _radio.ModelId = _settings.CatModelId;
+                    _radio.ApplySettings(_settings); // apply them all
                 }
                 catch { }
 

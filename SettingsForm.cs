@@ -56,6 +56,8 @@ namespace ZVClusterApp.WinForms {
         private Label _lblCiv = null!;
         private NumericUpDown _numCiv = null!;
         private Label _lblCivNote = null!; // note: applies to Icom only
+        private Label _lblStopBits = null!;
+        private ComboBox _cmbStopBits = null!;
 
         // New: Spot Server group controls
         private GroupBox _grpSpot = null!;
@@ -267,27 +269,31 @@ namespace ZVClusterApp.WinForms {
             _grpColors.Controls.AddRange(new Control[] { lblColors, _lvColors });
 
             // Radio CAT group to the right of Colors
-            _grpCat.Text = "Radio CAT"; _grpCat.Location = new Point(400, 420); _grpCat.Size = new Size(480, 140); _grpCat.Name = "_grpCat";
+            _grpCat.Text = "Radio CAT"; _grpCat.Location = new Point(400, 420); _grpCat.Size = new Size(480, 130); _grpCat.Name = "_grpCat";
             _chkCatEnabled.Text = "Enable CAT"; _chkCatEnabled.Location = new Point(15, 22); _chkCatEnabled.AutoSize = true;
-            _lblCatPort = new Label { Text = "Port:", Location = new Point(120, 22), AutoSize = true };
-            _cmbCatPort.DropDownStyle = ComboBoxStyle.DropDownList; _cmbCatPort.Location = new Point(165, 18); _cmbCatPort.Width = 90;
-            _lblCatBaud = new Label { Text = "Baud:", Location = new Point(260, 22), AutoSize = true };
-            _cmbCatBaud.DropDownStyle = ComboBoxStyle.DropDownList; _cmbCatBaud.Location = new Point(310, 18); _cmbCatBaud.Width = 80;
-            _lblRig = new Label { Text = "Rig:", Location = new Point(15, 52), AutoSize = true };
-            _cmbRig.DropDownStyle = ComboBoxStyle.DropDownList; _cmbRig.Location = new Point(60, 48); _cmbRig.Width = 120;
-            _lblModel = new Label { Text = "Model:", Location = new Point(200, 52), AutoSize = true };
-            _cmbModel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(255, 48), Width = 200 };
+            // Place port, baud, and stop bits controls underneath the Enable CAT checkbox
+            _lblCatPort = new Label { Text = "Port:", Location = new Point(15, 52), AutoSize = true };
+            _cmbCatPort.DropDownStyle = ComboBoxStyle.DropDownList; _cmbCatPort.Location = new Point(60, 48); _cmbCatPort.Width = 90;
+            _lblCatBaud = new Label { Text = "Baud:", Location = new Point(160, 52), AutoSize = true };
+            _cmbCatBaud.DropDownStyle = ComboBoxStyle.DropDownList; _cmbCatBaud.Location = new Point(205, 48); _cmbCatBaud.Width = 80;
+            _lblStopBits = new Label { Text = "Stop Bits:", Location = new Point(295, 52), AutoSize = true };
+            _cmbStopBits = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(360, 48), Width = 80 };
+            _cmbStopBits.Items.AddRange(new object[] { "1", "2" });
+            _lblRig = new Label { Text = "Rig:", Location = new Point(15, 82), AutoSize = true };
+            _cmbRig.DropDownStyle = ComboBoxStyle.DropDownList; _cmbRig.Location = new Point(60, 78); _cmbRig.Width = 120;
+            _lblModel = new Label { Text = "Model:", Location = new Point(200, 82), AutoSize = true };
+            _cmbModel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(255, 78), Width = 200 };
             // CI-V address (Icom only) — placed below the model selection
-            _lblCiv = new Label { Text = "CI-V Address:", Location = new Point(200, 78), AutoSize = true };
-            _numCiv.Minimum = 0x00; _numCiv.Maximum = 0xFF; _numCiv.Hexadecimal = true; _numCiv.Location = new Point(300, 74); _numCiv.Size = new Size(70, 23);
-            _lblCivNote = new Label { Text = "(Icom only)", Location = new Point(380, 78), AutoSize = true, ForeColor = SystemColors.GrayText };
+            _lblCiv = new Label { Text = "CI-V Address:", Location = new Point(200, 108), AutoSize = true };
+            _numCiv.Minimum = 0x00; _numCiv.Maximum = 0xFF; _numCiv.Hexadecimal = true; _numCiv.Location = new Point(300, 104); _numCiv.Size = new Size(70, 23);
+            _lblCivNote = new Label { Text = "(Icom only)", Location = new Point(380, 108), AutoSize = true, ForeColor = SystemColors.GrayText };
 
             _grpCat.Controls.Clear();
-            _grpCat.Controls.AddRange(new Control[] { _chkCatEnabled, _lblCatPort, _cmbCatPort, _lblCatBaud, _cmbCatBaud, _lblRig, _cmbRig, _lblModel, _cmbModel, _lblCiv, _numCiv, _lblCivNote });
+            _grpCat.Controls.AddRange(new Control[] { _chkCatEnabled, _lblCatPort, _cmbCatPort, _lblCatBaud, _cmbCatBaud, _lblStopBits, _cmbStopBits, _lblRig, _cmbRig, _lblModel, _cmbModel, _lblCiv, _numCiv, _lblCivNote });
 
             // CTY.DAT group below CAT
             _grpCty.Text = "CTY.DAT"; _grpCty.Location = new Point(400, 570); _grpCty.Size = new Size(480, 70); _grpCty.Name = "_grpCty";
-            _chkCtyBoot.Text = "Check CTY.DAT on boot"; _chkCtyBoot.AutoSize = true; _chkCtyBoot.Location = new Point(15, 28);
+            _chkCtyBoot.Text = "Check DXCC country database (CTY.DAT) on boot"; _chkCtyBoot.AutoSize = true; _chkCtyBoot.Location = new Point(15, 28);
             _grpCty.Controls.AddRange(new Control[] { _chkCtyBoot });
 
             // Appearance group (DX list font)
@@ -496,6 +502,11 @@ namespace ZVClusterApp.WinForms {
                 _cmbCatBaud.EndUpdate();
                 int bidx = _cmbCatBaud.FindStringExact(_working.CatBaud.ToString());
                 _cmbCatBaud.SelectedIndex = bidx >= 0 ? bidx : (_cmbCatBaud.Items.Count > 0 ? 0 : -1);
+
+                // Stop bits
+                var sbText = _working.CatStopBits == StopBits.Two ? "2" : "1";
+                int sbIdx = _cmbStopBits.FindStringExact(sbText);
+                _cmbStopBits.SelectedIndex = sbIdx >= 0 ? sbIdx : (_cmbStopBits.Items.Count > 0 ? 0 : -1);
 
                 // Rig types
                 _cmbRig.BeginUpdate();
@@ -716,6 +727,10 @@ namespace ZVClusterApp.WinForms {
 
                 // Persist selected model ID
                 _working.CatModelId = _cmbModel.SelectedItem as string ?? _working.CatModelId;
+
+                // Persist Stop Bits
+                var sbSel = _cmbStopBits.SelectedItem?.ToString();
+                _working.CatStopBits = string.Equals(sbSel, "2", StringComparison.OrdinalIgnoreCase) ? StopBits.Two : StopBits.One;
             } catch { }
 
             // Persist Appearance (DX list font) -> working copy
@@ -931,6 +946,7 @@ namespace ZVClusterApp.WinForms {
                 CatEnabled = src.CatEnabled,
                 CatPort = src.CatPort,
                 CatBaud = src.CatBaud,
+                CatStopBits = src.CatStopBits,
                 Rig = src.Rig,
                 CatModelId = src.CatModelId,
                 IcomAddress = src.IcomAddress,
@@ -995,6 +1011,7 @@ namespace ZVClusterApp.WinForms {
             dst.CatEnabled = src.CatEnabled;
             dst.CatPort = src.CatPort;
             dst.CatBaud = src.CatBaud;
+            dst.CatStopBits = src.CatStopBits;
             dst.Rig = src.Rig;
             dst.CatModelId = src.CatModelId;
             dst.IcomAddress = src.IcomAddress;
