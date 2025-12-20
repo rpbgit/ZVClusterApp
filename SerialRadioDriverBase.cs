@@ -15,6 +15,24 @@ namespace ZVClusterApp.WinForms
         private int _baud = 19200;
         private global::System.IO.Ports.StopBits _stopBits = global::System.IO.Ports.StopBits.One;
 
+        private int _commandPacingDelayMs = 250;
+        protected virtual int CommandPacingDelayMs => _commandPacingDelayMs;
+
+
+        protected void PaceBetweenCommands()
+        {
+            var delayMs = CommandPacingDelayMs;
+            if (delayMs <= 0) return;
+
+            try
+            {
+                Debug.WriteLine($"[CAT] Pacing delay: {delayMs}ms");
+            }
+            catch { }
+
+            Thread.Sleep(delayMs);
+        }
+
         public bool Enabled
         {
             get => _enabled;
@@ -186,6 +204,8 @@ namespace ZVClusterApp.WinForms
             Baud = s.CatBaud;
             // Driver StopBits expects 1 or 2; settings store enum
             StopBits = s.CatStopBits == global::System.IO.Ports.StopBits.Two ? 2 : 1;
+            _commandPacingDelayMs = Math.Clamp(s.CatCommandPacingDelayMs, 0, 2500);
+
         }
     }
 }

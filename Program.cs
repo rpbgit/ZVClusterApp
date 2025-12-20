@@ -92,6 +92,9 @@ namespace ZVClusterApp.WinForms
                     Rig = settings.Rig,
                     IcomAddress = settings.IcomAddress
                 };
+                // Ensure ALL CAT settings reach the driver on startup (including pacing delay).
+                radio.ApplySettings(settings);
+
                 // Apply selected model to the underlying driver if supported
                 try
                 {

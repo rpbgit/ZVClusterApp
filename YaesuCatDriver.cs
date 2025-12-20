@@ -64,6 +64,7 @@ namespace ZVClusterApp.WinForms
 
                 if (!string.IsNullOrWhiteSpace(mode))
                 {
+                    PaceBetweenCommands();
                     var modeCmd = _profile.BuildSetMode((mode ?? string.Empty).Trim().ToUpperInvariant());
                     Dispatch(modeCmd);
                 }

@@ -92,11 +92,14 @@ namespace ZVClusterApp.WinForms
         public bool TrackFromUs { get; set; } = true;
         public bool TrackFromDx { get; set; } = true;
 
+        // CAT related
         public bool CatEnabled { get; set; } = false;
         public string CatPort { get; set; } = "COM1";
         public int CatBaud { get; set; } = 19200;
         // New: persisted stop bits configuration for CAT serial port
         public StopBits CatStopBits { get; set; } = StopBits.One;
+        public int CatCommandPacingDelayMs { get; set; } = 250;
+
         public RigType Rig { get; set; } = RigType.Icom;
 
         // Selected radio model ID used by drivers to choose CAT/CIV profile

@@ -85,11 +85,17 @@ namespace ZVClusterApp.WinForms
         // Helper to apply settings after the Settings dialog saves
         public void ApplySettings(AppSettings s)
         {
-            // These setters trigger Disconnect() on change in the driver; lazy reconnect happens on next write.
-            Enabled = s.CatEnabled;
-            Port = s.CatPort;
-            Baud = s.CatBaud;
-            StopBits = (s.CatStopBits == System.IO.Ports.StopBits.Two) ? 2 : 1;
+            // Apply CAT/serial settings to the driver (includes pacing delay)
+            if (_driver is SerialRadioDriverBase serial)
+                serial.ApplySettings(s);
+            else
+            {
+                // Fallback (shouldn't happen with current drivers)
+                Enabled = s.CatEnabled;
+                Port = s.CatPort;
+                Baud = s.CatBaud;
+                StopBits = (s.CatStopBits == System.IO.Ports.StopBits.Two) ? 2 : 1;
+            }
 
             Rig = s.Rig;
             ModelId = s.CatModelId;
@@ -111,7 +117,7 @@ namespace ZVClusterApp.WinForms
             drv.Baud = baud;
             drv.Enabled = enabled;
             // Apply persisted StopBits to the driver
-            try { drv.StopBits = AppSettings.Load().CatStopBits == System.IO.Ports.StopBits.Two ? 2 : 1; } catch { drv.StopBits = 1; }
+            //try { drv.StopBits = AppSettings.Load().CatStopBits == System.IO.Ports.StopBits.Two ? 2 : 1; } catch { drv.StopBits = 1; }
             return drv;
         }
 
