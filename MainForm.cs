@@ -1512,7 +1512,7 @@ namespace ZVClusterApp.WinForms
             }
         }
 
-        private void Context_JumpRadio()
+        private async void Context_JumpRadio()
         {
             try
             {
@@ -1521,8 +1521,12 @@ namespace ZVClusterApp.WinForms
                 var freqText = it.SubItems[1].Text ?? string.Empty;
                 int hz = ParseFrequencyToHz(freqText);
                 if (hz <= 0) return;
+
                 var mode = InferModeForFrequency(hz);
-                var ok = _radio.SendFrequency(hz, mode);
+
+                // IMPORTANT: async call so UI thread is not blocked while pacing happens.
+                var ok = await _radio.SendFrequencyAsync(hz, mode).ConfigureAwait(true);
+
                 string band = Utils.FrequencyToBand(hz);
                 ShowToastForBand($"Radio: {FormatFreqHz(hz)} {mode} {(ok ? "OK" : "FAILED")}", ok, band);
             }
