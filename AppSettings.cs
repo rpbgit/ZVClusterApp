@@ -304,7 +304,8 @@ namespace ZVClusterApp.WinForms
                     new() { Name = "Last 30 DX", Command = "SH/MYDX/30" },
                     new() { Name = "Ignore K,VE", Command = "SET/FILTER DXCTY/REJECT K,VE" },
                     new() { Name = "Only K,VE Origin", Command = "SET/FILTER DOC/PASS K,VE" },
-                    new() { Name = "All Spots", Command = "SET/FILTER DXCTY/OFF" }
+                    new() { Name = "All Spots", Command = "SET/FILTER DXCTY/OFF" },
+                    new() { Name = "WWV", Command = "SH/WWV" }
                 }
             });
 
