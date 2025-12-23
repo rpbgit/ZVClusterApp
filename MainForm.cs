@@ -295,7 +295,7 @@ namespace ZVClusterApp.WinForms
             MainMenuStrip = menu;
 
             // SplitContainer for console and list
-            _split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 300 };
+            _split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 116 };
             _split.SplitterMoved += (s, e) => QueueRepaintSpots(); _split.SizeChanged += (s, e) => QueueRepaintSpots();
 
             // Console area (upper)

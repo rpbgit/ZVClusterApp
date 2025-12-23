@@ -247,7 +247,7 @@ namespace ZVClusterApp.WinForms
             def.Ui = new UiSettings {
                 Width = 820,
                 Height = 494,
-                SplitterDistance = 200,
+                SplitterDistance = 116,
                 ColumnWidths = new[] { 100, 80, 100, 60, 160, 70, 120, 165 }
             };
             // Seed default DX list font in fresh defaults
