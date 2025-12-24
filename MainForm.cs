@@ -321,10 +321,13 @@ namespace ZVClusterApp.WinForms
             _txtConsoleInput.TextChanged += TxtConsoleInput_TextChanged;
             _txtConsoleInput.MouseUp += (s, e) => EnsureCursorAfterPrompt();
             _txtConsoleInput.Enter += (s, e) => MoveCaretToEnd();
+            _txtConsoleInput.HandleCreated += (s, e) => SyncSendButtonHeight();
+            _txtConsoleInput.SizeChanged += (s, e) => SyncSendButtonHeight();
             _shortcutMenu = BuildShortcutMenu(_txtConsoleInput);
             _txtConsoleInput.ContextMenuStrip = _shortcutMenu;
             _btnSend = new Button { Text = "Send", Dock = DockStyle.Right, Width = 80 };
             _btnSend.Click += (s, e) => SendConsoleLine();
+            _btnSend.HandleCreated += (s, e) => SyncSendButtonHeight();
             bottomConsolePanel.Controls.Add(_txtConsoleInput);
             bottomConsolePanel.Controls.Add(_btnSend);
 
@@ -1840,8 +1843,14 @@ namespace ZVClusterApp.WinForms
             dlg.TopMost = this.TopMost;
             if (dlg.ShowDialog(this) == DialogResult.OK)
             {
-                // Apply local server changes
-                try { _localServer?.Stop(); _localServer?.Dispose(); } catch { }
+                // Apply local server changes dynamically to the existing radio controller
+                try
+                {
+                    _localServer?.Stop();
+                    _localServer?.Dispose();
+                }
+                catch { }
+
                 if (_settings.LocalServerEnabled)
                 {
                     _localServer = new LocalClusterServer(_settings.LocalServerPort > 0 ? _settings.LocalServerPort : 7373);
@@ -2442,6 +2451,36 @@ namespace ZVClusterApp.WinForms
                 }
                 catch { }
             };
+        }
+
+        // Add near other private helpers
+        private void SyncSendButtonHeight()
+        {
+            try
+            {
+                if (_btnSend == null || _txtConsoleInput == null) return;
+
+                var panel = _txtConsoleInput.Parent as Panel;
+                if (panel == null) return;
+
+                // Make the container fit the textbox; docked button will follow container height.
+                // Prefer textbox's PreferredHeight to avoid transient 0/odd values.
+                int desired = _txtConsoleInput.PreferredHeight;
+                if (desired <= 0) desired = _txtConsoleInput.Height;
+
+                // Small vertical padding so the textbox doesn't look cramped.
+                const int vPad = 2;
+                int panelHeight = desired + vPad;
+
+                if (panel.Height != panelHeight)
+                    panel.Height = panelHeight;
+
+                // Keep width behavior unchanged.
+                _btnSend.AutoSize = false;
+                if (_btnSend.Width != 80)
+                    _btnSend.Width = 80;
+            }
+            catch { }
         }
     }
 
