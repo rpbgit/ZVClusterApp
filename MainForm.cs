@@ -679,6 +679,29 @@ namespace ZVClusterApp.WinForms
             }
             catch { }
         }
+        // Add near other private helpers (e.g., near ParseFrequencyToHz)
+        private static DateTime ParseSpotTimeUtcOrNow(string line) {
+            try {
+                if (!string.IsNullOrWhiteSpace(line)) {
+                    var m = Regex.Match(line, @"\b(?<hh>\d{1,2})(?<mm>\d{2})Z\b", RegexOptions.IgnoreCase);
+                    if (m.Success) {
+                        int hh = int.Parse(m.Groups["hh"].Value, CultureInfo.InvariantCulture);
+                        int mm = int.Parse(m.Groups["mm"].Value, CultureInfo.InvariantCulture);
+
+                        var now = DateTime.UtcNow;
+                        var t = new DateTime(now.Year, now.Month, now.Day, hh, mm, 0, DateTimeKind.Utc);
+
+                        // If it "lands" in the future, assume it was from yesterday (midnight rollover).
+                        if (t > now.AddMinutes(5))
+                            t = t.AddDays(-1);
+
+                        return t;
+                    }
+                }
+            } catch { }
+
+            return DateTime.UtcNow;
+        }
 
         private void RepaintSpotsAfterLayout()
         {
@@ -941,9 +964,12 @@ namespace ZVClusterApp.WinForms
                 // Sanity-check frequency range (avoid parsing dates/times as spots)
                 if (hz < 1_800_000 || hz > 54_000_000) return;
 
+                // Inside AddListViewRawLine(string raw), after you normalize 'line' and before creating the ListViewItem:
+                var spotTimeUtc = ParseSpotTimeUtcOrNow(line);
+
                 var it = new ListViewItem(dxCall);
                 it.SubItems.Add(freqTxt);                               // 1 Freq
-                it.SubItems.Add(DateTime.UtcNow.ToString("HH:mm:ss"));  // 2 Time
+                it.SubItems.Add(spotTimeUtc.ToString("HH:mm:ss"));      // 2 Time (spot time, not arrival
                 it.SubItems.Add(string.Empty);                          // 3 Country
                 it.SubItems.Add(string.Empty);                          // 4 Dist
                 it.SubItems.Add(string.Empty);                          // 5 Bearing
