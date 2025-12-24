@@ -3,11 +3,20 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Diagnostics; // ADDED
-using System.Text.RegularExpressions; // ADDED for prompt detection
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace ZVClusterApp.WinForms
 {
+    public enum ClusterConnectionState
+    {
+        Disconnected = 0,
+        Connecting = 1,
+        Connected = 2,
+        Faulted = 3,
+        Reconnecting = 4
+    }
+
     /// <summary>
     /// Manages multiple <see cref="ClusterClient"/> instances, tracks which cluster is currently active,
     /// dispatches received lines, performs auto-login sequences, and runs a keepalive loop.
@@ -18,22 +27,27 @@ namespace ZVClusterApp.WinForms
     /// </summary>
     public class ClusterManager : IDisposable
     {
-        private readonly AppSettings _settings;                           // Application settings source
-        private readonly Dictionary<string, ClusterClient> _clients = new(); // All cluster client instances keyed by name
-        private ClusterClient? _activeClient;                             // Currently active (connected) cluster client instance
+        private readonly AppSettings _settings;
+        private readonly Dictionary<string, ClusterClient> _clients = new();
+        private ClusterClient? _activeClient;
 
         /// <summary>Raised when a line is received from any cluster (cluster name, line text).</summary>
         public event Action<string, string>? LineReceived;
+
+        // NEW: notify UI/controllers when a cluster connection state changes.
+        // NOTE: raised from background threads; UI must marshal via BeginInvoke.
+        public event Action<string, ClusterConnectionState, string?>? ConnectionStateChanged;
+
         /// <summary>Name of the currently active cluster or null when none connected.</summary>
         public string? ActiveClusterName { get; private set; }
 
         // Activity / keepalive tracking ----------------------------------------------------------
-        private readonly object _activityLock = new();                    // Protects access to dictionaries / suppression set / reconnection trackers
-        private readonly Dictionary<string, DateTime> _lastActivityUtc = new(); // Last time we saw *any* line from each cluster
-        private readonly Dictionary<string, DateTime> _lastKeepAliveUtc = new(); // Last time we sent a keepalive ping per cluster
-        private readonly HashSet<string> _keepAliveSuppressed = new(StringComparer.OrdinalIgnoreCase); // Clusters currently suppressing keepalive pings due to IO fault
-        private CancellationTokenSource _keepAliveCts = new();             // Lifetime token source for keepalive loop
-        private Task? _keepAliveTask;                                     // Keepalive loop task
+        private readonly object _activityLock = new();
+        private readonly Dictionary<string, DateTime> _lastActivityUtc = new();
+        private readonly Dictionary<string, DateTime> _lastKeepAliveUtc = new();
+        private readonly HashSet<string> _keepAliveSuppressed = new(StringComparer.OrdinalIgnoreCase);
+        private CancellationTokenSource _keepAliveCts = new();
+        private Task? _keepAliveTask;
 
         // Proactive reconnection management ------------------------------------------------------
         // One reconnect worker per cluster name at most. We store the task and a CTS to cancel it when no longer needed.
@@ -102,6 +116,7 @@ namespace ZVClusterApp.WinForms
                 {
                     UnsuppressKeepAlive(c.Name);
                     StopReconnectWorker(c.Name); // stop any ongoing proactive worker for this cluster
+                    RaiseConnectionStateChanged(c.Name, ClusterConnectionState.Connected, "Reconnected");
                     OnClientReconnected(c.Name);
                 };
 
@@ -109,10 +124,25 @@ namespace ZVClusterApp.WinForms
                 client.Faulted += () =>
                 {
                     SuppressKeepAlive(c.Name);
+
+                    // If the faulted client is the active one, reflect that immediately.
+                    try
+                    {
+                        if (string.Equals(ActiveClusterName, c.Name, StringComparison.OrdinalIgnoreCase))
+                            RaiseConnectionStateChanged(c.Name, ClusterConnectionState.Faulted, "IO fault");
+                    }
+                    catch { }
+
                     StartReconnectWorker(c.Name);
                 };
             }
+
             StartKeepAliveLoop();
+        }
+
+        private void RaiseConnectionStateChanged(string name, ClusterConnectionState state, string? detail)
+        {
+            try { ConnectionStateChanged?.Invoke(name, state, detail); } catch { }
         }
 
         // ---------------------------------------------------------------------------------------
@@ -120,19 +150,14 @@ namespace ZVClusterApp.WinForms
         private void SuppressKeepAlive(string name)
         {
             lock (_activityLock)
-            {
                 _keepAliveSuppressed.Add(name);
-            }
         }
         private void UnsuppressKeepAlive(string name)
         {
             lock (_activityLock)
             {
                 if (_keepAliveSuppressed.Remove(name))
-                {
-                    // Reset keepalive timestamp so we don't instantly send a ping on recovery.
                     _lastKeepAliveUtc[name] = DateTime.UtcNow;
-                }
             }
         }
 
@@ -159,17 +184,16 @@ namespace ZVClusterApp.WinForms
                     _activeClient = client;
                 }
 
-                // If a different cluster was made active, still proceed if this is the adopted/only cluster.
-                // Previously: if (!string.Equals(ActiveClusterName, name, StringComparison.OrdinalIgnoreCase)) return;
+                RaiseConnectionStateChanged(name, ClusterConnectionState.Reconnecting, "Starting reconnect worker");
 
                 var cts = new CancellationTokenSource();
                 var token = cts.Token;
+
                 var task = Task.Run(async () =>
                 {
-                    // Basic backoff parameters.
                     var rand = new Random();
-                    int delayMs = 1500;          // initial backoff
-                    const int maxDelayMs = 60_000; // cap
+                    int delayMs = 1500;
+                    const int maxDelayMs = 60_000;
 
                     while (!token.IsCancellationRequested)
                     {
@@ -183,11 +207,11 @@ namespace ZVClusterApp.WinForms
 
                             // Attempt a quick reconnect with its own timeout (5s).
                             using var timeout = new CancellationTokenSource(5000);
-                            var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, token);
+                            using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, token);
                             var ok = await client.ConnectAsync(linked.Token).ConfigureAwait(false);
                             if (ok)
                             {
-                                // Success: the client will raise Reconnected, which stops this worker.
+                                RaiseConnectionStateChanged(name, ClusterConnectionState.Connected, "Reconnect succeeded");
                                 break;
                             }
                         }
@@ -391,6 +415,9 @@ namespace ZVClusterApp.WinForms
         public async Task<bool> ConnectAsync(string name, CancellationToken token, bool forceLogin = false)
         {
             if (!_clients.TryGetValue(name, out var client)) return false;
+
+            RaiseConnectionStateChanged(name, ClusterConnectionState.Connecting, null);
+
             var def = GetDefinition(name);
             var ok = await client.ConnectAsync(token).ConfigureAwait(false);
             if (ok)
@@ -401,12 +428,16 @@ namespace ZVClusterApp.WinForms
                 UnsuppressKeepAlive(name);
                 StopReconnectWorker(name);
 
+                RaiseConnectionStateChanged(name, ClusterConnectionState.Connected, null);
+
                 if (def != null)
-                {
                     await ReplayLoginAndDefaultsAsync(name, client, def, token, forceLogin).ConfigureAwait(false);
-                }
+
+                return true;
             }
-            return ok;
+
+            RaiseConnectionStateChanged(name, ClusterConnectionState.Disconnected, "Connect failed");
+            return false;
         }
 
         /// <summary>Send a raw line through the currently active client (echoed to UI first).</summary>
@@ -431,13 +462,22 @@ namespace ZVClusterApp.WinForms
                     try { c.Disconnect(); } catch { }
                 }
                 StopAllReconnectWorkers();
-                ActiveClusterName = null; _activeClient = null;
+                ActiveClusterName = null;
+                _activeClient = null;
+                RaiseConnectionStateChanged(string.Empty, ClusterConnectionState.Disconnected, "Disconnected all");
             }
             else if (_clients.TryGetValue(name, out var c))
             {
                 c.Disconnect();
                 StopReconnectWorker(name);
-                if (ActiveClusterName == name) { ActiveClusterName = null; _activeClient = null; }
+
+                if (ActiveClusterName == name)
+                {
+                    ActiveClusterName = null;
+                    _activeClient = null;
+                }
+
+                RaiseConnectionStateChanged(name, ClusterConnectionState.Disconnected, "Disconnected by user");
             }
         }
 
@@ -456,9 +496,7 @@ namespace ZVClusterApp.WinForms
         private void UpdateLastActivity(string name)
         {
             lock (_activityLock)
-            {
                 _lastActivityUtc[name] = DateTime.UtcNow;
-            }
         }
 
         /// <summary>
@@ -532,6 +570,7 @@ namespace ZVClusterApp.WinForms
                             {
                                 // Any failure sending keepalive -> suppress pings and start proactive reconnect
                                 lock (_activityLock) _keepAliveSuppressed.Add(activeName);
+                                RaiseConnectionStateChanged(activeName, ClusterConnectionState.Faulted, "Keepalive send failed");
                                 StartReconnectWorker(activeName);
                             }
                         }

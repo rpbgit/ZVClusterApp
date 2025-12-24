@@ -165,7 +165,9 @@ namespace ZVClusterApp.WinForms
             if (_settings.Ui != null && _settings.Ui.Width > 0 && _settings.Ui.Height > 0) { Width = _settings.Ui.Width; Height = _settings.Ui.Height; }
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             InitializeUi();
-            // Apply persisted CAT model to radio driver on startup so the correct CAT/CIV profile is used.
+
+            HookClusterConnectionState();
+
             try { _radio.ModelId = _settings.CatModelId; } catch { }
             PopulateClustersCombo();
             EnsureCtyDatLoadedOnBoot();
@@ -2375,6 +2377,71 @@ namespace ZVClusterApp.WinForms
                 AppSettings.Save(_settings);
             }
             catch { }
+        }
+
+        private void HookClusterConnectionState()
+        {
+            _clusterManager.ConnectionStateChanged += (name, state, detail) =>
+            {
+                try
+                {
+                    if (IsDisposed) return;
+
+                    BeginInvoke((Action)(() =>
+                    {
+                        try
+                        {
+                            // If empty => "disconnect all" message; show as disconnected.
+                            if (string.IsNullOrWhiteSpace(name))
+                            {
+                                _btnConnect.Text = "Connect";
+                                _lblStatus.Text = "Status: Disconnected";
+                                UpdateClusterIndicator();
+                                return;
+                            }
+
+                            // Only update the UI if it relates to the currently selected/active cluster.
+                            var target = SelectedClusterActualName() ?? string.Empty;
+                            if (!string.Equals(target, name, StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(_clusterManager.ActiveClusterName ?? string.Empty, name, StringComparison.OrdinalIgnoreCase))
+                                return;
+
+                            switch (state)
+                            {
+                                case ClusterConnectionState.Connecting:
+                                    _btnConnect.Text = "Connect";
+                                    _lblStatus.Text = $"Status: Connecting to {name}...";
+                                    break;
+
+                                case ClusterConnectionState.Connected:
+                                    _btnConnect.Text = "Disconnect";
+                                    _lblStatus.Text = $"Connected to {name} as {(_settings.MyCall ?? string.Empty).ToUpperInvariant()}";
+                                    break;
+
+                                case ClusterConnectionState.Reconnecting:
+                                    _btnConnect.Text = "Disconnect"; // still "logical session"; user can click to stop it
+                                    _lblStatus.Text = $"Status: Reconnecting to {name}...";
+                                    break;
+
+                                case ClusterConnectionState.Faulted:
+                                    _btnConnect.Text = "Disconnect"; // keeps semantics: click will force disconnect/stop worker
+                                    _lblStatus.Text = $"Status: Connection fault ({name})";
+                                    break;
+
+                                case ClusterConnectionState.Disconnected:
+                                default:
+                                    _btnConnect.Text = "Connect";
+                                    _lblStatus.Text = "Status: Disconnected";
+                                    break;
+                            }
+
+                            UpdateClusterIndicator();
+                        }
+                        catch { }
+                    }));
+                }
+                catch { }
+            };
         }
     }
 
