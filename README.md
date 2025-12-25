@@ -63,6 +63,9 @@ HOW TO get started
 	default now is to pass only spots ORIGINATING in K/VE, and reject spots for K/VE (show DX only).
 	edit as you see fit. 
 	
+- Cluster Input context menu
+	right click in the cluster console input window a number of cluster commands are available by default, and you can add/edit them at will (per cluster server). 
+	
 Recommend leaving defaults as they are until you are comfortable with it. 
 
 Build:
@@ -78,7 +81,7 @@ Notes:
 
 Known limitations:
 	- only tested on CC-Cluster servers (for now), using default of AI9T (Marshall, ILL)
-	- CAT only tested on Icom Radios, need volunteers to test on Yaesu/Kenwood.
+	- CAT only tested on Icom 7300/7610 series, Yaesu 857/817, need volunteers to test on other Yaesu/Kenwood.
 	- code for Yaesu and Kenwood radios has been coded in the blind (I dont own a Yaesu CATable radio).
 	- NO efforts are made to migrate existing .json settings if format/content of .json file configuration
 		changes.   when in doubt, delete the json file BEFORE starting appl. 
