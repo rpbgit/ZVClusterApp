@@ -495,7 +495,7 @@ namespace ZVClusterApp.WinForms {
                 _cmbCatPort.EndUpdate();
 
                 // Baud rates
-                int[] bauds = new[] { 9600, 19200, 38400, 57600, 115200 };
+                int[] bauds = new[] { 4800,9600, 19200, 38400, 57600, 115200 };
                 _cmbCatBaud.BeginUpdate();
                 _cmbCatBaud.Items.Clear();
                 foreach (var b in bauds) _cmbCatBaud.Items.Add(b);
