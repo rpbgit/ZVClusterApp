@@ -14,6 +14,7 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using System.IO;
 using System.Text;
+using Microsoft.Win32;
 
 namespace ZVClusterApp.WinForms
 {
@@ -29,6 +30,8 @@ namespace ZVClusterApp.WinForms
         private Button _btnConnect = null!;
         private Label _lblStatus = null!;
         private Font? _dxListFont;
+
+        private bool _resumeReconnectInProgress = false;
 
         // Runtime file logging handles
         private TextWriterTraceListener? _fileTraceListener;
@@ -168,6 +171,8 @@ namespace ZVClusterApp.WinForms
 
             HookClusterConnectionState();
 
+            try { SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged; } catch { }
+
             try { _radio.ModelId = _settings.CatModelId; } catch { }
             PopulateClustersCombo();
             EnsureCtyDatLoadedOnBoot();
@@ -197,6 +202,90 @@ namespace ZVClusterApp.WinForms
             }
             ResizeEnd += (s, e) => SaveUiSettings(); Move += (s, e) => QueueSaveUiSettings(); // debounced
             Shown += MainForm_Shown; FormClosing += MainForm_FormClosing; _lastConnectedCluster = _settings.LastConnectedCluster ?? string.Empty;
+        }
+
+        private void SystemEvents_PowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+        {
+            try
+            {
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[Power] PowerModeChanged: mode={e.Mode}, inProgress={_resumeReconnectInProgress}, active='{_clusterManager.ActiveClusterName ?? string.Empty}', last='{_settings.LastConnectedCluster ?? string.Empty}'");
+
+                if (e.Mode != PowerModes.Resume)
+                {
+                    if (_settings.DebugLogEnabled)
+                        Debug.WriteLine("[Power] Ignored (not Resume).");
+                    return;
+                }
+
+                if (_resumeReconnectInProgress)
+                {
+                    if (_settings.DebugLogEnabled)
+                        Debug.WriteLine("[Power] Resume reconnect already in progress; ignoring.");
+                    return;
+                }
+
+                _resumeReconnectInProgress = true;
+
+                BeginInvoke((Action)(async () =>
+                {
+                    try
+                    {
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine("[Power] UI: delaying 1500ms to let networking settle...");
+
+                        // Let networking settle (Wi-Fi often comes up slightly after Resume)
+                        await Task.Delay(1500).ConfigureAwait(true);
+
+                        var name = _clusterManager.ActiveClusterName;
+                        if (string.IsNullOrWhiteSpace(name))
+                            name = _settings.LastConnectedCluster;
+
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine($"[Power] UI: reconnect target='{name ?? string.Empty}'");
+
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            if (_settings.DebugLogEnabled)
+                                Debug.WriteLine("[Power] No reconnect target; aborting.");
+                            return;
+                        }
+
+                        AppendConsole("[SYS] System resume detected. Reconnecting...\r\n");
+
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine($"[Power] UI: disconnecting '{name}'...");
+
+                        try { _clusterManager.Disconnect(name); } catch { }
+
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine($"[Power] UI: connecting '{name}' (forceLogin=true, timeout=12s)...");
+
+                        using var cts = new CancellationTokenSource(12000);
+                        var ok = await _clusterManager.ConnectAsync(name, cts.Token, forceLogin: true).ConfigureAwait(true);
+
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine($"[Power] UI: reconnect result ok={ok}, active='{_clusterManager.ActiveClusterName ?? string.Empty}'");
+                    }
+                    catch (Exception ex)
+                    {
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine($"[Power] UI: reconnect exception: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    finally
+                    {
+                        _resumeReconnectInProgress = false;
+                        if (_settings.DebugLogEnabled)
+                            Debug.WriteLine("[Power] UI: inProgress reset to false.");
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                _resumeReconnectInProgress = false;
+                if (_settings.DebugLogEnabled)
+                    Debug.WriteLine($"[Power] handler exception: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         private void InitializeUi()
@@ -1650,6 +1739,8 @@ namespace ZVClusterApp.WinForms
 
         private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
         {
+            try { SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged; } catch { }
+
             try { _cts.Cancel(); } catch { }
             try { _localServer?.Stop(); } catch { }
             try { _localServer?.Dispose(); } catch { }
