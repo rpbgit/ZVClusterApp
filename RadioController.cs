@@ -7,7 +7,18 @@ using System.Threading.Tasks;
 
 namespace ZVClusterApp.WinForms
 {
-    public enum RigType { Unknown, Icom, Yaesu, Kenwood }
+    // RigType is persisted in `AppSettings.Rig` and is also directly used by the Settings UI.
+    //
+    // Option B requirement:
+    //  - Add Elecraft and Flex as *real* persisted types.
+    //  - Internally, both are implemented by reusing the existing Kenwood CAT driver/profile
+    //    (TS-590 style Kenwood ASCII CAT commands: e.g., FA, MD, ...).
+    //
+    // Why this approach:
+    //  - UI can show "Elecraft" and "Flex" explicitly (clear to user).
+    //  - Settings JSON stores them explicitly (no hidden mapping in the UI layer).
+    //  - Runtime still uses the well-tested `KenwoodCatDriver`.
+    public enum RigType { Unknown, Icom, Yaesu, Kenwood, Elecraft, Flex }
 
     public class RadioController : IDisposable
     {
@@ -270,16 +281,28 @@ namespace ZVClusterApp.WinForms
 
         private static IRadioDriver CreateDriver(RigType rig, string port, int baud, bool enabled)
         {
+            // Driver selection policy:
+            //  - Icom     => `IcomCivDriver` (binary CI-V protocol)
+            //  - Yaesu    => `YaesuCatDriver` (ASCII + some legacy binary frames)
+            //  - Kenwood  => `KenwoodCatDriver` (ASCII CAT)
+            //
+            // Option B mapping:
+            //  - Elecraft => `KenwoodCatDriver` (treated as Kenwood/TS-590 CAT command set)
+            //  - Flex     => `KenwoodCatDriver` (treated as Kenwood/TS-590 CAT command set)
+            //
+            // NOTE:
+            //  This is intentionally a mapping at the driver factory layer so that the rest of the
+            //  application does not need to know about "Elecraft/Flex use Kenwood CAT".
             SerialRadioDriverBase drv = rig switch
             {
                 RigType.Icom => new IcomCivDriver(),
                 RigType.Kenwood => new KenwoodCatDriver(),
+                RigType.Elecraft => new KenwoodCatDriver(),
+                RigType.Flex => new KenwoodCatDriver(),
                 RigType.Yaesu => new YaesuCatDriver(),
                 _ => new IcomCivDriver(),
             };
 
-            // Initial settings for new driver instance.
-            // (These may trigger Disconnect() logic inside the driver; ok during creation.)
             drv.Port = port;
             drv.Baud = baud;
             drv.Enabled = enabled;

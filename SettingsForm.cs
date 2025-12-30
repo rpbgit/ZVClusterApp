@@ -511,7 +511,18 @@ namespace ZVClusterApp.WinForms {
                 // Rig types
                 _cmbRig.BeginUpdate();
                 _cmbRig.Items.Clear();
-                _cmbRig.Items.AddRange(new object[] { RigType.Icom, RigType.Yaesu, RigType.Kenwood });
+
+                // Rig families exposed to the user.
+                //
+                // Option B:
+                //  - Elecraft and Flex are "real" RigType values (persisted in settings JSON).
+                //  - At runtime these map to `KenwoodCatDriver` (see `RadioController.CreateDriver`),
+                //    because both are supported via the Kenwood TS-590 style CAT command set.
+                //
+                // This keeps configuration explicit (no "secret mapping" in UI) while
+                // still reusing the existing driver implementation.
+                _cmbRig.Items.AddRange(new object[] { RigType.Icom, RigType.Yaesu, RigType.Kenwood, RigType.Elecraft, RigType.Flex });
+
                 _cmbRig.EndUpdate();
                 int ridx = -1;
                 for (int i = 0; i < _cmbRig.Items.Count; i++) {
@@ -546,21 +557,59 @@ namespace ZVClusterApp.WinForms {
                         // Show CI-V address control for Icom
                         _lblCiv.Visible = true; _numCiv.Visible = true; _lblCivNote.Visible = true;
                         break;
+
                     case RigType.Kenwood:
-                        _cmbModel.Items.AddRange(new object[] { "TS-590", "TS-480", "TS-2000", "TS-890", "TS-990" });
+                        _cmbModel.Items.AddRange(new object[]
+                            {
+                                "TS-440S",
+                                "TS-450S",
+                                "TS-480SAT / TS-480HX",
+                                "TS-570S / TS-570D",
+                                "TS-590S / TS-590SG",
+                                "TS-690S",
+                                "TS-850S",
+                                "TS-870S",
+                                "TS-890S",
+                                "TS-950SD / TS-950SDX",
+                                "TS-990S",
+                                "TS-2000"
+                            });
                         _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
                         break;
+
+                    case RigType.Elecraft:
+                        // Option B: Elecraft is implemented via the Kenwood driver (TS-590 CAT command set).
+                        //
+                        // These model IDs are informative/persisted only. The current `KenwoodCatDriver`
+                        // does not have Elecraft-specific profiles, and will fall back to its default
+                        // TS-590 profile for unknown models (which is what we want).
+                        _cmbModel.Items.AddRange(new object[] { "K3", "K3S", "K4", "KX2", "KX3" });
+                        _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
+                        break;
+
+                    case RigType.Flex:
+                        // Option B: Flex is implemented via the Kenwood driver (TS-590 CAT command set).
+                        //
+                        // These model IDs are informative/persisted only. Unknown model IDs will still
+                        // be handled by `KenwoodCatDriver` by falling back to the TS-590 CAT profile.
+                        _cmbModel.Items.AddRange(new object[] { "FLEX-6300", "FLEX-6400", "FLEX-6500", "FLEX-6600", "FLEX-6700" });
+                        _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
+                        break;
+
                     case RigType.Yaesu:
                         _cmbModel.Items.AddRange(new object[] { "FT-991", "FT-891", "FT-101", "FTDX10", "FTDX1200", "FTDX3000", "FT-817", "FT-818", "FT-857", "FT-897" });
                         _lblCiv.Visible = false; _numCiv.Visible = false; _lblCivNote.Visible = false;
                         break;
+
                     default:
                         _cmbModel.Items.Add("IC-7300");
                         _lblCiv.Visible = true; _numCiv.Visible = true; _lblCivNote.Visible = true;
                         break;
                 }
+
                 if (_cmbModel.Items.Count > 0 && _cmbModel.SelectedIndex < 0)
                     _cmbModel.SelectedIndex = 0;
+
                 // Initialize CI-V for Icom using the already-resolved rig value
                 try
                 {
