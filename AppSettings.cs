@@ -72,7 +72,7 @@ namespace ZVClusterApp.WinForms
 
         // Local server
         public int LocalServerPort { get; set; } = 7373;
-        public bool LocalServerEnabled { get; set; } = true;
+        public bool LocalServerEnabled { get; set; } = false;
 
         // Debug logging toggle (opt-in)
         public bool DebugLogEnabled { get; set; } = false;
