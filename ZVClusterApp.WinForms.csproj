@@ -28,6 +28,7 @@
     <Compile Remove="SettingsForm.Designer.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Remove="Alfred-E-Newman-How-to-solder-COLOR.png" />
     <None Remove="Properties\PublishProfiles\FolderProfile - Copy.pubxmlORIGINAL" />
   </ItemGroup>
   <ItemGroup>
